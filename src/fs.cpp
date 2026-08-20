@@ -228,7 +228,7 @@ kal_uintptr kal_fs_stream(kal_file f) {
     return h ? reinterpret_cast<kal_uintptr>(h) : 0u;
 }
 
-int kal_fs_seek(kal_file f, __INT64_TYPE__ offset, int whence, __UINT64_TYPE__* result) {
+int kal_fs_seek(kal_file f, kal_i64 offset, int whence, kal_u64* result) {
     void* h = file_handle(f);
     if (!h) return kal_err_invalid;
     LARGE_INTEGER distance{}; distance.QuadPart = offset;
@@ -238,11 +238,11 @@ int kal_fs_seek(kal_file f, __INT64_TYPE__ offset, int whence, __UINT64_TYPE__* 
     else if (whence == KAL_SEEK_END) method = FILE_END;
     if (!SetFilePointerEx(h, distance, &arrived, method))
         return okw::translate_win32(GetLastError());
-    if (result) *result = static_cast<__UINT64_TYPE__>(arrived.QuadPart);
+    if (result) *result = static_cast<kal_u64>(arrived.QuadPart);
     return kal_ok;
 }
 
-int kal_fs_truncate(kal_file f, __UINT64_TYPE__ size) {
+int kal_fs_truncate(kal_file f, kal_u64 size) {
     void* h = file_handle(f);
     if (!h) return kal_err_invalid;
     okw::io_status_block s{};
@@ -281,6 +281,21 @@ int kal_fs_file_info(kal_file f, kal_node_info* out) {
     void* h = file_handle(f);
     if (!h || out == nullptr) return kal_err_invalid;
     return fill(h, out);
+}
+
+int kal_fs_set_modified(kal_file f, kal_u64 modified_ns) {
+    void* h = file_handle(f);
+    if (!h) return kal_err_invalid;
+    okw::file_basic_information basic{};
+    // Every field of this record is a time, and this environment reads a zero
+    // as "leave that one alone". So one field is written and the record says
+    // nothing about the other three, which is what the interface asked for.
+    basic.last_write_time =
+        static_cast<okw_i64>(modified_ns / 100ull + kEpochDifference);
+    okw::io_status_block iosb{};
+    const long r = okw::NtSetInformationFile(h, &iosb, &basic, sizeof basic,
+                                             okw::file_basic_information_class);
+    return okw::ok(r) ? kal_ok : okw::translate_nt(r);
 }
 
 int kal_fs_mkdir(kal_dir base, const char* name, kal_uintptr len) {

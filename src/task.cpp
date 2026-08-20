@@ -64,12 +64,12 @@ void kal_task_yield(void) { SwitchToThread(); }
 
 kal_uintptr kal_task_current(void) { return static_cast<kal_uintptr>(GetCurrentThreadId()); }
 
-int kal_task_wait(const __UINT32_TYPE__* word, __UINT32_TYPE__ expected,
-                  __UINT64_TYPE__ timeout_ns) {
-    __UINT32_TYPE__ compare = expected;
+int kal_task_wait(const kal_u32* word, kal_u32 expected,
+                  kal_u64 timeout_ns) {
+    kal_u32 compare = expected;
     DWORD ms = INFINITE;
     if (timeout_ns != 0) {
-        const __UINT64_TYPE__ rounded = (timeout_ns + 999999ull) / 1000000ull;
+        const kal_u64 rounded = (timeout_ns + 999999ull) / 1000000ull;
         ms = rounded > 0xfffffffeull ? 0xfffffffeu : static_cast<DWORD>(rounded);
     }
     if (WaitOnAddress(const_cast<volatile void*>(static_cast<const volatile void*>(word)),
@@ -79,7 +79,7 @@ int kal_task_wait(const __UINT32_TYPE__* word, __UINT32_TYPE__ expected,
     return okw::translate_win32(e);
 }
 
-int kal_task_wake(const __UINT32_TYPE__* word, kal_uintptr count, kal_uintptr* woken) {
+int kal_task_wake(const kal_u32* word, kal_uintptr count, kal_uintptr* woken) {
     void* address = const_cast<void*>(static_cast<const void*>(word));
     if (count == 0) { if (woken) *woken = 0; return kal_ok; }
     if (count == 1) WakeByAddressSingle(address);

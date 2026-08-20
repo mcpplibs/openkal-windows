@@ -46,6 +46,16 @@ wide_name::wide_name(const char* utf8, okw_uptr len) : ok(false) {
     string.buffer = buffer;
     string.length = 0;
     string.maximum = 0;
+    // The one reserved name, clause 7.12: "." denotes the directory itself.
+    //
+    // Two of the three environments openkal is implemented on reserve the same
+    // word in their own naming and accept it wherever a name is accepted. This
+    // one does not: its object manager reads "." as a name to look up, finds no
+    // child so called, and reports that the argument is invalid. What it does
+    // accept is an empty name beside the directory's own handle, which denotes
+    // exactly the same thing --- so the translation is here, where every other
+    // difference between the two spellings of a name already is.
+    if (len == 1 && utf8 != nullptr && utf8[0] == '.') len = 0;
     if (len == 0) { buffer[0] = 0; ok = true; return; }
     if (len > kMaxName / 2) return;
     const int produced = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
