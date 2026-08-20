@@ -34,44 +34,68 @@ kal_duration to_nanoseconds(okw_i64 ticks) {
 
 // The supplied directories.
 //
-// A hosted system does not confine an ordinary program, so it is supplied both
-// the directory it was started in and the volume that directory is on. Each is
-// reported under the name the environment knows it by, spelled the way openkal
-// spells a name, because a C library above openkal must both resolve an
-// absolute name and report one.
+// A hosted system does not confine an ordinary program, so it is supplied the
+// directory it was started in and every volume the system has. Each is reported
+// under the name the environment knows it by, spelled the way openkal spells a
+// name, because a C library above openkal must both resolve an absolute name
+// and report one.
+//
+// Every volume, and not only the one the working directory is on. This system
+// has no single root: a name on one volume is not beneath a name on another,
+// and a program supplied only its own volume cannot reach a program installed
+// elsewhere --- which is not a confinement anybody chose, and which the other
+// two systems, having one root, do not impose. What made it visible was a
+// program on one volume failing to start a program on another, reported four
+// operations later as "no such file".
 struct preopen { char name[okw::kMaxName]; okw_uptr len; okw_uptr handle; };
 
+constexpr kal_uintptr kMaxPreopens = 27;   // the working directory, and 26 volumes
+
 preopen* table(kal_uintptr* count) {
-    static preopen t[2];
+    static preopen t[kMaxPreopens];
+    static kal_uintptr used = 0;
     static bool opened = false;
     if (!opened) {
         opened = true;
-        wchar_t cwd[okw::kMaxName];
-        const DWORD n = GetCurrentDirectoryW(okw::kMaxName, cwd);
-        if (n > 0 && n < okw::kMaxName) {
-            t[0].len = okw::narrow(cwd, n, t[0].name, sizeof t[0].name);
-            void* h = CreateFileW(cwd, FILE_LIST_DIRECTORY | GENERIC_READ,
+
+        // Opened by the whole name this environment uses, and reported by as
+        // much of it as openkal's naming wants: a volume is opened as "X:\\"
+        // and reported as "X:", so that the remainder of an absolute name
+        // beneath it does not begin with a separator.
+        const auto add = [](preopen& slot, const wchar_t* open_by, DWORD report) {
+            void* h = CreateFileW(open_by, FILE_LIST_DIRECTORY | GENERIC_READ,
                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                   nullptr, OPEN_EXISTING,
                                   FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-            t[0].handle = h == INVALID_HANDLE_VALUE ? 0 : okw::pack(h);
+            if (h == INVALID_HANDLE_VALUE) return false;
+            slot.len = okw::narrow(open_by, report, slot.name, sizeof slot.name);
+            slot.handle = okw::pack(h);
+            return true;
+        };
 
-            // The volume, named the way this environment names it. A program
-            // resolving an absolute name finds the longest supplied name that
-            // is a prefix of it, so both are needed and neither is a root in
-            // the sense another system would mean.
-            if (n >= 3 && cwd[1] == L':') {
-                wchar_t root[4] = { cwd[0], L':', L'\\', 0 };
-                t[1].len = okw::narrow(root, 3, t[1].name, sizeof t[1].name);
-                void* r = CreateFileW(root, FILE_LIST_DIRECTORY | GENERIC_READ,
-                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                      nullptr, OPEN_EXISTING,
-                                      FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-                t[1].handle = r == INVALID_HANDLE_VALUE ? 0 : okw::pack(r);
+        wchar_t cwd[okw::kMaxName];
+        const DWORD n = GetCurrentDirectoryW(okw::kMaxName, cwd);
+        if (n > 0 && n < okw::kMaxName && add(t[used], cwd, n)) ++used;
+
+        // The volumes, in the form this environment reports them: a run of
+        // strings, each terminated, the run terminated again.
+        wchar_t volumes[512];
+        const DWORD v = GetLogicalDriveStringsW(512, volumes);
+        if (v > 0 && v < 512) {
+            for (const wchar_t* p = volumes; *p && used < kMaxPreopens; ) {
+                DWORD length = 0;
+                while (p[length]) ++length;
+                // Reported as "X:\" and named here without the separator, so
+                // that a program resolving an absolute name finds the longest
+                // supplied name that is a prefix of it and the remainder does
+                // not begin with one.
+                const DWORD keep = (length >= 3 && p[length - 1] == L'\\') ? length - 1 : length;
+                if (add(t[used], p, keep)) ++used;
+                p += length + 1;
             }
         }
     }
-    if (count) *count = t[1].handle ? 2u : 1u;
+    if (count) *count = used;
     return t;
 }
 
