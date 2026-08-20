@@ -8,7 +8,7 @@ authors     = ["mcpplibs"]
 repo        = "https://github.com/mcpplibs/openkal-windows"
 
 [dependencies]
-openkal = "0.5.1"
+openkal = "0.5.2"
 
 # The package contributes definitions and no modules. The interface it
 # implements is declared by the specification package, which this package
