@@ -1,6 +1,28 @@
 #include "win.h"
 #include <openkal/types.h>
 
+// The libraries this environment's own interfaces live in, named for the ABI
+// whose toolchains read a name from the object rather than from the link line.
+//
+// ntdll carries the object manager, which is where a name relative to a
+// directory is opened --- the operation openkal declares and Win32 does not
+// offer. synchronization carries the suspension primitive. shell32 carries the
+// operation that splits a command line into a vector.
+//
+// It is here rather than in the manifest because the two ABIs this environment
+// has do not merely spell a library differently: on one of them the compiler
+// records the requirement in the object it produces, so a program that links
+// this package needs nothing in its own manifest, and the requirement cannot
+// fall out of step with the source that creates it. The other ABI has no such
+// mechanism, and there the manifest names them.
+#if defined(_MSC_VER)
+#pragma comment(lib, "ntdll.lib")
+#pragma comment(lib, "synchronization.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "kernel32.lib")
+#endif
+
+
 namespace okw {
 
 okw_uptr length(const char* s) { okw_uptr n = 0; while (s && s[n]) ++n; return n; }
@@ -46,8 +68,23 @@ wide_name::wide_name(const char* utf8, okw_uptr len) : ok(false) {
     string.buffer = buffer;
     string.length = 0;
     string.maximum = 0;
+    // The one reserved name, clause 7.12: "." denotes the directory itself.
+    //
+    // Two of the three environments openkal is implemented on reserve the same
+    // word in their own naming and accept it wherever a name is accepted. This
+    // one does not: its object manager reads "." as a name to look up, finds no
+    // child so called, and reports that the argument is invalid. What it does
+    // accept is an empty name beside the directory's own handle, which denotes
+    // exactly the same thing --- so the translation is here, where every other
+    // difference between the two spellings of a name already is.
+    if (len == 1 && utf8 != nullptr && utf8[0] == '.') len = 0;
     if (len == 0) { buffer[0] = 0; ok = true; return; }
-    if (len > kMaxName / 2) return;
+    // One byte of the caller's encoding never becomes more than one unit of
+    // this environment's: a character outside the basic plane costs four bytes
+    // and two units, and every other costs at least as many bytes as units. So
+    // the bound is the buffer's own length and not half of it. The half was a
+    // guess, and it refused names this environment accepts.
+    if (len >= kMaxName) return;
     const int produced = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
                                              utf8, static_cast<int>(len),
                                              buffer, static_cast<int>(kMaxName - 1));

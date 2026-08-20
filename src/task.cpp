@@ -1,5 +1,6 @@
 #include "win.h"
 #include <openkal/task.h>
+#include <openkal/time.h>
 #include <openkal/memory.h>
 
 // Execution contexts, and the primitive they are built upon.
@@ -64,22 +65,44 @@ void kal_task_yield(void) { SwitchToThread(); }
 
 kal_uintptr kal_task_current(void) { return static_cast<kal_uintptr>(GetCurrentThreadId()); }
 
-int kal_task_wait(const __UINT32_TYPE__* word, __UINT32_TYPE__ expected,
-                  __UINT64_TYPE__ timeout_ns) {
-    __UINT32_TYPE__ compare = expected;
-    DWORD ms = INFINITE;
-    if (timeout_ns != 0) {
-        const __UINT64_TYPE__ rounded = (timeout_ns + 999999ull) / 1000000ull;
-        ms = rounded > 0xfffffffeull ? 0xfffffffeu : static_cast<DWORD>(rounded);
+int kal_task_wait(const kal_u32* word, kal_u32 expected,
+                  kal_u64 timeout_ns) {
+    auto* address = const_cast<volatile void*>(static_cast<const volatile void*>(word));
+
+    if (timeout_ns == 0) {
+        kal_u32 compare = expected;
+        if (WaitOnAddress(address, &compare, 4, INFINITE)) return kal_ok;
+        const unsigned long e = GetLastError();
+        return e == ERROR_TIMEOUT ? kal_err_again : okw::translate_win32(e);
     }
-    if (WaitOnAddress(const_cast<volatile void*>(static_cast<const volatile void*>(word)),
-                      &compare, 4, ms)) return kal_ok;
-    const unsigned long e = GetLastError();
-    if (e == ERROR_TIMEOUT) return kal_err_again;
-    return okw::translate_win32(e);
+
+    // A timeout is a floor and not a hint.
+    //
+    // This environment takes a whole number of milliseconds and measures it
+    // against a clock whose tick is longer than that, so a wait given thirty
+    // milliseconds returns after fifteen. A caller that asked to be suspended
+    // for a duration and was returned to before it elapsed has been given a
+    // wrong answer, and every timed wait built upon this one inherits it.
+    //
+    // So the deadline is computed once from the monotonic source and the wait
+    // is re-entered until that source has passed it. The timeout is reported
+    // only when the time has genuinely gone.
+    const kal_u64 deadline = kal_time_monotonic() + timeout_ns;
+    for (;;) {
+        const kal_u64 now = kal_time_monotonic();
+        if (now >= deadline) return kal_err_again;
+        const kal_u64 remaining = deadline - now;
+        const kal_u64 rounded = (remaining + 999999ull) / 1000000ull;
+        const DWORD ms = rounded > 0xfffffffeull ? 0xfffffffeu
+                                                 : static_cast<DWORD>(rounded ? rounded : 1);
+        kal_u32 compare = expected;
+        if (WaitOnAddress(address, &compare, 4, ms)) return kal_ok;
+        const unsigned long e = GetLastError();
+        if (e != ERROR_TIMEOUT) return okw::translate_win32(e);
+    }
 }
 
-int kal_task_wake(const __UINT32_TYPE__* word, kal_uintptr count, kal_uintptr* woken) {
+int kal_task_wake(const kal_u32* word, kal_uintptr count, kal_uintptr* woken) {
     void* address = const_cast<void*>(static_cast<const void*>(word));
     if (count == 0) { if (woken) *woken = 0; return kal_ok; }
     if (count == 1) WakeByAddressSingle(address);
