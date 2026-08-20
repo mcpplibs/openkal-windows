@@ -47,8 +47,10 @@ ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
 # nothing to say about how a program that has a runtime unwinds.
 cxxflags = ["-fno-exceptions", "-fno-rtti"]
 
-[target.'cfg(all(windows, env = "msvc"))'.build]
-ldflags = ["ntdll.lib", "synchronization.lib", "shell32.lib", "kernel32.lib"]
+# The other ABI names them in src/win.cpp instead, where its compilers record
+# the requirement in the object they produce. A library named on the link line
+# there would have to be named again by every program that links this package;
+# a library named in the object travels with it.
 
 # There is deliberately no guard flag for a function-local static. An earlier
 # version disabled it; every static in this package is initialised by a constant,

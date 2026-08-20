@@ -1,6 +1,28 @@
 #include "win.h"
 #include <openkal/types.h>
 
+// The libraries this environment's own interfaces live in, named for the ABI
+// whose toolchains read a name from the object rather than from the link line.
+//
+// ntdll carries the object manager, which is where a name relative to a
+// directory is opened --- the operation openkal declares and Win32 does not
+// offer. synchronization carries the suspension primitive. shell32 carries the
+// operation that splits a command line into a vector.
+//
+// It is here rather than in the manifest because the two ABIs this environment
+// has do not merely spell a library differently: on one of them the compiler
+// records the requirement in the object it produces, so a program that links
+// this package needs nothing in its own manifest, and the requirement cannot
+// fall out of step with the source that creates it. The other ABI has no such
+// mechanism, and there the manifest names them.
+#if defined(_MSC_VER)
+#pragma comment(lib, "ntdll.lib")
+#pragma comment(lib, "synchronization.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "kernel32.lib")
+#endif
+
+
 namespace okw {
 
 okw_uptr length(const char* s) { okw_uptr n = 0; while (s && s[n]) ++n; return n; }
