@@ -35,7 +35,13 @@
 #include <windows.h>
 #include <shellapi.h>
 
-using okw_uptr = __UINTPTR_TYPE__;
+// The width of a machine word is taken from the specification rather than from
+// the compiler, because the three compilers this package is built with do not
+// all publish the compiler's own spelling of the type and openkal already
+// resolves that.
+#include <openkal/types.h>
+
+using okw_uptr = kal_uintptr;
 using okw_u64  = unsigned long long;
 using okw_i64  = long long;
 using okw_u32  = unsigned int;

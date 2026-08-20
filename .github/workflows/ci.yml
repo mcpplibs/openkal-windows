@@ -1,0 +1,203 @@
+name: CI
+
+# What this workflow asserts.
+#
+#   conformance   the suite in the specification package runs against this
+#                 implementation and every observation holds, under all three
+#                 of this environment's toolchains
+#   surface       the exported names are exactly the fifty-one the
+#                 specification lists
+#   independence  the objects reference no C runtime symbol
+#
+# This environment has two application binary interfaces and three toolchains
+# that reach them, and an implementation that built under one of the three would
+# not be an implementation for this environment. So all three are built: the two
+# that produce the environment's own ABI, and the one that produces the other.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  MCPP_VERSION: 2026.8.19.4
+  XLINGS_VERSION: v2026.8.17.2
+  XLINGS_NON_INTERACTIVE: '1'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # On the system itself.
+  conformance:
+    name: conformance (${{ matrix.name }})
+    runs-on: windows-2022
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: 'llvm, msvc ABI', toolchain: 'llvm@20.1.7',  target: '' }
+          - { name: 'msvc',           toolchain: 'msvc@system',  target: '' }
+          - { name: 'gcc, gnu CRT',   toolchain: 'gcc@16.1.0',   target: 'x86_64-windows-gnu' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # The specification is checked out at the branch under test where it has
+      # one, so that this run asserts what it is for: that the specification as
+      # written there and this implementation as written here agree today.
+      - name: The specification
+        run: |
+          git clone --quiet https://github.com/mcpplibs/openkal.git .spec
+          branch='${{ github.head_ref || github.ref_name }}'
+          if git -C .spec rev-parse --verify --quiet "origin/$branch" > /dev/null; then
+            git -C .spec checkout --quiet "origin/$branch"
+            echo "the specification is at $branch"
+          else
+            echo "the specification has no $branch; its default branch is used"
+          fi
+
+      - name: Install xlings
+        shell: pwsh
+        run: |
+          irm https://d2learn.org/xlings-install.ps1.txt | iex
+          "$env:USERPROFILE\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install mcpp
+        run: |
+          xlings update
+          xlings install "mcpp@$MCPP_VERSION" -y -g
+          mcpp --version
+          mcpp self config --mirror GLOBAL
+
+      - name: Select the toolchain
+        run: |
+          spec='${{ matrix.toolchain }}'
+          case "$spec" in
+            msvc*) mcpp toolchain default msvc ;;
+            *)     mcpp toolchain install "${spec%@*}" "${spec#*@}"
+                   mcpp toolchain default "$spec" ;;
+          esac
+          mcpp toolchain list
+
+      - name: Every interface, every kind of examination
+        run: |
+          extra=''
+          [ -n '${{ matrix.target }}' ] && extra='--target ${{ matrix.target }}'
+          bash .spec/tools/run-conformance.sh openkal-windows . full $extra
+
+  # ---------------------------------------------------------------------------
+  # From a system that is not this one.
+  #
+  # The same package, produced by a cross build and run under an implementation
+  # of this environment's interfaces rather than on the environment. It is here
+  # for two reasons: it is where the exported names can be examined with tools
+  # that read this environment's object format and are not on it, and a package
+  # that only builds on the system it targets is a package a contributor on any
+  # other system cannot work on.
+  cross:
+    name: cross build, run under wine, and examine the objects
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The specification
+        run: |
+          git clone --quiet https://github.com/mcpplibs/openkal.git .spec
+          branch='${{ github.head_ref || github.ref_name }}'
+          if git -C .spec rev-parse --verify --quiet "origin/$branch" > /dev/null; then
+            git -C .spec checkout --quiet "origin/$branch"
+          fi
+
+      - name: Install wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine64 > /dev/null
+          wine64 --version
+
+      - name: Install xlings
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Install mcpp
+        run: |
+          xlings update
+          xlings install "mcpp@$MCPP_VERSION" -y -g
+          mcpp self config --mirror GLOBAL
+
+      - name: Every interface, every kind of examination
+        env:
+          OPENKAL_CONFORMANCE_RUNNER: wine64
+          WINEDEBUG: '-all'
+        run: |
+          bash .spec/tools/run-conformance.sh openkal-windows . full \
+            --target x86_64-windows-gnu
+
+      - name: The exported surface is complete and contains nothing else
+        run: |
+          # Clause 9.3. The list and the checker come from the specification
+          # rather than from a copy kept here, so that the comparison has one
+          # source. --complete because this implementation claims every
+          # interface: a name it fails to export is a failure, not an interface
+          # it declines to provide.
+          rm -rf target && mcpp build --target x86_64-windows-gnu
+          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o' | tr '\n' ' ')"
+          test -n "$objs" || { echo "no objects were found" >&2; exit 1; }
+          bash .spec/tools/check-surface.sh --complete .spec/SURFACE.txt $objs
+
+      # The property this implementation exists to have. A program above openkal
+      # may supply a C runtime of its own; an implementation that reached for
+      # this environment's would have its calls resolve to the program's, and
+      # the program's would resolve back here.
+      - name: The objects reference no C runtime symbol
+        run: |
+          rm -rf target && mcpp build --features standalone --target x86_64-windows-gnu
+          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o')"
+          test -n "$objs" || { echo "no objects were found; the check would pass vacuously" >&2; exit 1; }
+
+          # The permitted set, and why each entry is in it.
+          #
+          #   __imp_*        this environment's own interfaces, reached through
+          #     the import table. They are the environment, not a C runtime.
+          #   Nt*, Rtl*      the object manager, likewise.
+          #   WaitOnAddress, WakeByAddress*     the suspension primitive, which
+          #     this environment publishes without an import stub.
+          #   memcpy, memmove, memset, memcmp   a compiler emits calls to these
+          #     from ordinary loops. They compute rather than call, so none of
+          #     them can re-enter this implementation.
+          #   __libc_start_main, main           the hand-over, undefined here by
+          #     construction.
+          #   kal_*, _ZN3okw*                   the interface and this package.
+          #   __chkstk_ms, __udivti3, ...       the compiler's own support
+          #     routines, which are in the compiler's library and not in a C
+          #     runtime.
+          permitted='^(__imp_[A-Za-z0-9_]+|Nt[A-Za-z]+|Rtl[A-Za-z]+|WaitOnAddress|WakeByAddress(All|Single)|memcpy|memmove|memset|memcmp|__libc_start_main|main|kal_[a-z_]+|_ZN3okw.*|_*chkstk[a-z_]*|__udiv[a-z0-9]*|__umod[a-z0-9]*|__divti3|__modti3|_GLOBAL_OFFSET_TABLE_)$'
+          bad=0
+          for s in $(nm --undefined-only $objs | awk '{print $2}' | sort -u); do
+            [ -n "$s" ] || continue
+            printf '%s\n' "$s" | grep -qE "$permitted" || {
+              echo "the implementation references a symbol it must not: $s" >&2
+              bad=1
+            }
+          done
+          test "$bad" -eq 0
+          echo "the implementation references no C runtime symbol"
+
+      # A checker is only useful if it fails when it should.
+      - name: The independence check detects a dependence
+        run: |
+          printf 'extern "C" int puts(const char*);\nextern "C" void okw_probe(void) { puts("x"); }\n' > src/probe.cpp
+          rm -rf target && mcpp build --features standalone --target x86_64-windows-gnu
+          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o')"
+          if ! nm --undefined-only $objs | awk '{print $2}' | grep -qx puts; then
+            echo "the probe did not produce the reference it was written to produce" >&2
+            rm -f src/probe.cpp; exit 1
+          fi
+          rm -f src/probe.cpp
+          echo "a dependence upon a C runtime is visible to the check"

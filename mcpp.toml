@@ -14,7 +14,6 @@ openkal = "0.5.0"
 # implements is declared by the specification package, which this package
 # includes and does not re-export.
 
-[build]
 # The libraries this environment's own interfaces live in.
 #
 # ntdll carries the object manager, which is where a name relative to a
@@ -23,12 +22,37 @@ openkal = "0.5.0"
 # operation that splits a command line into a vector, which is this
 # environment's own definition of what its argument vector is and is therefore
 # used rather than reimplemented.
+#
+# They are named twice because the two application binary interfaces this
+# environment has spell a library differently: one names it as an argument to
+# the linker and the other as an input file. Naming them once in the spelling of
+# either would make this package build under two of the three toolchains it is
+# written for.
+[target.'cfg(all(windows, env = "gnu"))'.build]
 ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
 
-flags = [
-  { glob = "src/**", cxxflags = ["-fno-exceptions", "-fno-rtti",
-                                 "-fno-threadsafe-statics"] },
-]
+# Exceptions and run-time type information, on the one ABI where their absence
+# is asserted.
+#
+# This package throws nothing and has no virtual function, but a compiler still
+# emits a landing pad for every function holding an object with a destructor,
+# and each landing pad references its own runtime's personality routine. On this
+# ABI the property that the objects reference no C runtime symbol is checked, and
+# a program that selects `standalone' here has no such runtime to supply that
+# routine --- so the landing pads are not emitted.
+#
+# On the other ABI the flags are absent, and deliberately. A program using that
+# ABI has a C runtime; there the toolchain's defaults are correct, one of the two
+# toolchains that reach it would not recognise these spellings, and openkal has
+# nothing to say about how a program that has a runtime unwinds.
+cxxflags = ["-fno-exceptions", "-fno-rtti"]
+
+[target.'cfg(all(windows, env = "msvc"))'.build]
+ldflags = ["ntdll.lib", "synchronization.lib", "shell32.lib", "kernel32.lib"]
+
+# There is deliberately no guard flag for a function-local static. An earlier
+# version disabled it; every static in this package is initialised by a constant,
+# so no guard is emitted and the flag was doing nothing under any toolchain.
 
 [features]
 default = []
