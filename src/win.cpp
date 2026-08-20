@@ -79,7 +79,12 @@ wide_name::wide_name(const char* utf8, okw_uptr len) : ok(false) {
     // difference between the two spellings of a name already is.
     if (len == 1 && utf8 != nullptr && utf8[0] == '.') len = 0;
     if (len == 0) { buffer[0] = 0; ok = true; return; }
-    if (len > kMaxName / 2) return;
+    // One byte of the caller's encoding never becomes more than one unit of
+    // this environment's: a character outside the basic plane costs four bytes
+    // and two units, and every other costs at least as many bytes as units. So
+    // the bound is the buffer's own length and not half of it. The half was a
+    // guess, and it refused names this environment accepts.
+    if (len >= kMaxName) return;
     const int produced = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
                                              utf8, static_cast<int>(len),
                                              buffer, static_cast<int>(kMaxName - 1));

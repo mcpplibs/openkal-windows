@@ -35,6 +35,25 @@ bool append_wide(wchar_t* out, okw_uptr cap, okw_uptr& at, const wchar_t* s, okw
 // passes one string and lets the started program split it. The quoting below is
 // the inverse of the splitting this environment defines, so that the two agree;
 // getting it wrong would alter the vector while appearing to pass it.
+// One string of the caller's encoding, converted straight into the buffer it is
+// destined for.
+//
+// Not through okw::wide_name, which is for names: a name is bounded by what a
+// file system accepts and an argument or a named value is not. An environment's
+// search path is routinely longer than any name, and converting it through a
+// buffer sized for names refused it --- which reached the caller as "the
+// argument is not valid", four operations away from the length that caused it.
+bool append_utf8(wchar_t* out, okw_uptr cap, okw_uptr& at, const char* s, okw_uptr n) {
+    if (n == 0) return true;
+    if (at + n + 1 >= cap) return false;
+    const int produced = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s,
+                                             static_cast<int>(n), out + at,
+                                             static_cast<int>(cap - at - 1));
+    if (produced <= 0) return false;
+    at += static_cast<okw_uptr>(produced);
+    return true;
+}
+
 bool append_quoted(wchar_t* out, okw_uptr cap, okw_uptr& at, const wchar_t* s, okw_uptr n) {
     if (!append_wide(out, cap, at, L"\"", 1)) return false;
     okw_uptr backslashes = 0;
@@ -104,13 +123,16 @@ int kal_process_spawn(kal_dir base,
     okw_uptr used = 0;
     for (kal_uintptr i = 0; i < argc; ++i) {
         if (i && !append_wide(line, kCommandLine, used, L" ", 1)) return kal_err_no_space;
-        okw::wide_name w(argv[i], argv_lens[i]);
-        if (!w.ok) return kal_err_invalid;
-        // The separator substitution wide_name performs is for names, and an
-        // argument is not a name, so it is undone here.
-        for (okw_uptr k = 0; k < w.string.length / 2u; ++k)
-            if (argv[i][k] == '/') w.buffer[k] = L'/';
-        if (!append_quoted(line, kCommandLine, used, w.buffer, w.string.length / 2u))
+        // Converted into a scratch of its own so that it can be quoted, and
+        // quoted because this environment passes one string and lets the
+        // started program split it. Clause 7.6 requires the vector to arrive
+        // unaltered, and the quoting is the inverse of that splitting.
+        okw_uptr produced = 0;
+        wchar_t* one = line + used + 1;              // beyond what is written
+        const okw_uptr room = kCommandLine - used - 2;
+        if (!append_utf8(one, room, produced, argv[i], argv_lens[i]))
+            return argv_lens[i] >= room ? kal_err_no_space : kal_err_invalid;
+        if (!append_quoted(line, kCommandLine, used, one, produced))
             return kal_err_no_space;
     }
     line[used] = 0;
@@ -121,11 +143,7 @@ int kal_process_spawn(kal_dir base,
     wchar_t* block = work->block;
     okw_uptr block_used = 0;
     for (kal_uintptr i = 0; i < envc; ++i) {
-        okw::wide_name w(envp[i], envp_lens[i]);
-        if (!w.ok) return kal_err_invalid;
-        for (okw_uptr k = 0; k < w.string.length / 2u; ++k)
-            if (envp[i][k] == '/') w.buffer[k] = L'/';
-        if (!append_wide(block, kCommandLine, block_used, w.buffer, w.string.length / 2u))
+        if (!append_utf8(block, kCommandLine, block_used, envp[i], envp_lens[i]))
             return kal_err_no_space;
         block[block_used++] = 0;
     }
