@@ -116,8 +116,12 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update -qq
+          # The package is named for the architecture and the program is not:
+          # this distribution's wine has one binary called `wine', and a script
+          # that calls `wine64' fails with "command not found" after a
+          # successful install.
           sudo apt-get install -y --no-install-recommends wine64 > /dev/null
-          wine64 --version
+          wine --version
 
       - name: Install xlings
         run: |
@@ -133,7 +137,7 @@ jobs:
 
       - name: Every interface, every kind of examination
         env:
-          OPENKAL_CONFORMANCE_RUNNER: wine64
+          OPENKAL_CONFORMANCE_RUNNER: wine
           WINEDEBUG: '-all'
         run: |
           bash .spec/tools/run-conformance.sh openkal-windows . full \
