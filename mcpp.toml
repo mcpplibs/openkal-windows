@@ -26,7 +26,8 @@ openkal = "0.5.0"
 ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
 
 flags = [
-  { glob = "src/**", cxxflags = ["-fno-exceptions", "-fno-rtti"] },
+  { glob = "src/**", cxxflags = ["-fno-exceptions", "-fno-rtti",
+                                 "-fno-threadsafe-statics"] },
 ]
 
 [features]

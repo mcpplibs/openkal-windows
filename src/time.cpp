@@ -3,13 +3,19 @@
 
 namespace {
 
+okw_u64 g_frequency = 0;
+
 okw_u64 frequency() {
-    static okw_u64 f = [] {
+    // Read once and remembered. The initialiser is not a constant, so a
+    // function-local static would need the guard a C++ runtime supplies, and
+    // this arrangement has no C++ runtime. Two contexts arriving together
+    // compute the same value and store it, so the race has one outcome.
+    if (g_frequency == 0) {
         LARGE_INTEGER v{};
         QueryPerformanceFrequency(&v);
-        return v.QuadPart > 0 ? static_cast<okw_u64>(v.QuadPart) : 1u;
-    }();
-    return f;
+        g_frequency = v.QuadPart > 0 ? static_cast<okw_u64>(v.QuadPart) : 1u;
+    }
+    return g_frequency;
 }
 
 okw_u64 counter() {

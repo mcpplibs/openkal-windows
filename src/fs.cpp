@@ -127,6 +127,11 @@ struct listing {
     okw_uptr at;
     bool     first;
     unsigned char buffer[8192];
+    // The name reported to the caller. It belongs to the enumeration rather
+    // than to the context performing it: two contexts enumerating two
+    // directories would otherwise share one buffer, and openkal requires that
+    // concurrent operations upon distinct handles be permitted.
+    char     reported[512];
 };
 
 }  // namespace
@@ -321,12 +326,14 @@ int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
     okw::wide_name w(b, blen);
     if (!w.ok) { okw::NtClose(h); return kal_err_invalid; }
 
-    // The renaming record carries the name inline, so it is built in a buffer
-    // whose size is known at compile time and whose bound is the same bound
-    // every name in this implementation has.
-    static thread_local unsigned char storage[sizeof(okw::file_rename_information)
-                                              + okw::kMaxName * sizeof(wchar_t)];
-    auto* info = reinterpret_cast<okw::file_rename_information*>(storage);
+    // The renaming record carries the name inline. It is obtained rather than
+    // kept in static storage, because static storage shared between execution
+    // contexts would make two concurrent renames one.
+    const kal_uintptr storage_bytes = sizeof(okw::file_rename_information)
+                                    + okw::kMaxName * sizeof(wchar_t);
+    auto* info = static_cast<okw::file_rename_information*>(
+        kal_alloc(storage_bytes, alignof(okw::file_rename_information)));
+    if (!info) { okw::NtClose(h); return kal_err_no_memory; }
     info->replace_if_exists = 1;
     info->root_directory = target_root;
     info->file_name_length = w.string.length;
@@ -338,6 +345,7 @@ int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
                                                 + w.string.length),
         okw::file_rename_information_class);
     okw::NtClose(h);
+    kal_free(info, storage_bytes, alignof(okw::file_rename_information));
     return okw::ok(n) ? kal_ok : okw::translate_nt(n);
 }
 
@@ -371,7 +379,6 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter, const char** name,
                      kal_uintptr* len, int* kind) {
     if (iter == nullptr || *iter == 0) return kal_err_invalid;
     auto* s = reinterpret_cast<listing*>(*iter);
-    static thread_local char reported[okw::kMaxName];
 
     for (;;) {
         if (s->at >= s->used) {
@@ -408,8 +415,8 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter, const char** name,
         if (chars == 1 && e->file_name[0] == L'.') continue;
         if (chars == 2 && e->file_name[0] == L'.' && e->file_name[1] == L'.') continue;
 
-        const okw_uptr n = okw::narrow(e->file_name, chars, reported, sizeof reported);
-        if (name) *name = reported;
+        const okw_uptr n = okw::narrow(e->file_name, chars, s->reported, sizeof s->reported);
+        if (name) *name = s->reported;
         if (len)  *len  = n;
         if (kind) *kind = (e->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? kal_node_link
                         : (e->file_attributes & FILE_ATTRIBUTE_DIRECTORY)     ? kal_node_directory

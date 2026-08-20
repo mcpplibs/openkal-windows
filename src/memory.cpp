@@ -15,9 +15,14 @@ namespace {
 
 constexpr okw_uptr kNatural = 16;   // what this environment's heap guarantees
 
+void* g_heap = nullptr;
+
 void* heap() {
-    static void* h = GetProcessHeap();
-    return h;
+    // As in src/time.cpp: remembered rather than recomputed, without the guard
+    // a C++ runtime would supply. The environment returns the same handle to
+    // every caller, so two contexts arriving together store the same value.
+    if (!g_heap) g_heap = GetProcessHeap();
+    return g_heap;
 }
 
 }  // namespace

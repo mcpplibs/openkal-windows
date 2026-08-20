@@ -9,14 +9,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/abort.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/abort.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/abort.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/abort.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/abort.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/abort.o"
   },
   {
     "arguments": [
@@ -28,14 +29,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/env.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/env.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/env.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/env.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/env.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/env.o"
   },
   {
     "arguments": [
@@ -47,14 +49,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/fs.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/fs.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/fs.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/fs.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/fs.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/fs.o"
   },
   {
     "arguments": [
@@ -66,14 +69,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/memory.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/memory.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/memory.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/memory.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/memory.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/memory.o"
   },
   {
     "arguments": [
@@ -85,14 +89,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/process.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/process.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/process.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/process.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/process.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/process.o"
   },
   {
     "arguments": [
@@ -104,14 +109,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/start.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/start.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/start.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/start.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/start.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/start.o"
   },
   {
     "arguments": [
@@ -123,14 +129,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/stream.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/stream.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/stream.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/stream.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/stream.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/stream.o"
   },
   {
     "arguments": [
@@ -142,14 +149,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/task.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/task.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/task.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/task.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/task.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/task.o"
   },
   {
     "arguments": [
@@ -161,14 +169,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/time.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/time.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/time.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/time.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/time.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/time.o"
   },
   {
     "arguments": [
@@ -180,14 +189,15 @@
       "-g",
       "-fno-exceptions",
       "-fno-rtti",
+      "-fno-threadsafe-statics",
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal-windows/src/win.cpp",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/win.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/win.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/win.cpp",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/win.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/win.o"
   },
   {
     "arguments": [
@@ -200,11 +210,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/abort.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/abort.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/abort.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/abort.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/abort.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/abort.m.o"
   },
   {
     "arguments": [
@@ -217,11 +227,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/env.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/env.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/env.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/env.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/env.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/env.m.o"
   },
   {
     "arguments": [
@@ -234,11 +244,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/fs.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/fs.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/fs.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/fs.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/fs.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/fs.m.o"
   },
   {
     "arguments": [
@@ -251,11 +261,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/memory.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/memory.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/memory.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/memory.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/memory.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/memory.m.o"
   },
   {
     "arguments": [
@@ -268,11 +278,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/process.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/process.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/process.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/process.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/process.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/process.m.o"
   },
   {
     "arguments": [
@@ -285,11 +295,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/stream.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/stream.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/stream.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/stream.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/stream.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/stream.m.o"
   },
   {
     "arguments": [
@@ -302,11 +312,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/task.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/task.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/task.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/task.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/task.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/task.m.o"
   },
   {
     "arguments": [
@@ -319,11 +329,11 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/time.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/time.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/time.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/time.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/time.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/time.m.o"
   },
   {
     "arguments": [
@@ -336,10 +346,10 @@
       "-c",
       "/home/speak/workspace/github/mcpplibs/openkal/src/types.cppm",
       "-o",
-      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/types.m.o"
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/types.m.o"
     ],
     "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
     "file": "/home/speak/workspace/github/mcpplibs/openkal/src/types.cppm",
-    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/types.m.o"
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/727304d7b32943b8/obj/mcpplibs_openkal/src/types.m.o"
   }
 ]

@@ -1,6 +1,7 @@
 #include "win.h"
 #include "handle.h"
 #include <openkal/process.h>
+#include <openkal/memory.h>
 
 // A program image that has been started.
 //
@@ -71,7 +72,20 @@ int kal_process_spawn(kal_dir base,
     if (!okw::acceptable(path, path_len)) return kal_err_invalid;
 
     // The directory's own name, and the program's beneath it.
-    static thread_local wchar_t image[okw::kMaxName];
+    // Obtained rather than kept in static storage: static storage shared
+    // between execution contexts would make two concurrent spawns one.
+    struct scratch {
+        wchar_t image[okw::kMaxName];
+        wchar_t line[kCommandLine];
+        wchar_t block[kCommandLine];
+    };
+    auto* work = static_cast<scratch*>(kal_alloc(sizeof(scratch), alignof(scratch)));
+    if (!work) return kal_err_no_memory;
+    struct releaser {
+        scratch* p;
+        ~releaser() { if (p) kal_free(p, sizeof(scratch), alignof(scratch)); }
+    } guard{ work };
+    wchar_t* image = work->image;
     const DWORD n = GetFinalPathNameByHandleW(dir, image, okw::kMaxName - 2,
                                               FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
     if (n == 0 || n >= okw::kMaxName - 2) return okw::translate_win32(GetLastError());
@@ -86,7 +100,7 @@ int kal_process_spawn(kal_dir base,
     image[at] = 0;
 
     // The vector, unaltered, including its first element.
-    static thread_local wchar_t line[kCommandLine];
+    wchar_t* line = work->line;
     okw_uptr used = 0;
     for (kal_uintptr i = 0; i < argc; ++i) {
         if (i && !append_wide(line, kCommandLine, used, L" ", 1)) return kal_err_no_space;
@@ -104,7 +118,7 @@ int kal_process_spawn(kal_dir base,
 
     // The named values. An empty set means the started program receives the
     // caller's, which is what this environment does when none is supplied.
-    static thread_local wchar_t block[kCommandLine];
+    wchar_t* block = work->block;
     okw_uptr block_used = 0;
     for (kal_uintptr i = 0; i < envc; ++i) {
         okw::wide_name w(envp[i], envp_lens[i]);
