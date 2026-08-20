@@ -1,0 +1,345 @@
+[
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/abort.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/abort.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/abort.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/abort.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/env.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/env.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/env.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/env.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/fs.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/fs.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/fs.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/fs.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/memory.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/memory.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/memory.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/memory.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/process.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/process.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/process.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/process.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/start.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/start.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/start.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/start.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/stream.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/stream.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/stream.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/stream.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/task.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/task.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/task.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/task.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/time.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/time.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/time.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/time.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/src/win.cpp",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/win.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal-windows/src/win.cpp",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/win.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/abort.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/abort.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/abort.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/abort.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/env.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/env.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/env.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/env.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/fs.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/fs.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/fs.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/fs.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/memory.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/memory.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/memory.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/memory.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/process.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/process.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/process.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/process.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/stream.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/stream.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/stream.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/stream.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/task.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/task.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/task.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/task.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/time.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/time.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/time.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/time.m.o"
+  },
+  {
+    "arguments": [
+      "/home/speak/.mcpp/registry/data/xpkgs/xim-x-mingw-cross-gcc/16.1.0/bin/x86_64-w64-mingw32-g++",
+      "-I/home/speak/workspace/github/mcpplibs/openkal/include",
+      "-std=c++23",
+      "-fmodules",
+      "-O0",
+      "-g",
+      "-c",
+      "/home/speak/workspace/github/mcpplibs/openkal/src/types.cppm",
+      "-o",
+      "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/types.m.o"
+    ],
+    "directory": "/home/speak/workspace/github/mcpplibs/openkal-windows",
+    "file": "/home/speak/workspace/github/mcpplibs/openkal/src/types.cppm",
+    "output": "/home/speak/workspace/github/mcpplibs/openkal-windows/target/x86_64-windows-gnu/939b4775c7f64605/obj/mcpplibs_openkal/src/types.m.o"
+  }
+]

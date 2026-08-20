@@ -1,0 +1,40 @@
+[package]
+namespace   = "mcpplibs"
+name        = "openkal-windows"
+version     = "0.1.0"
+description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
+license     = "Apache-2.0"
+authors     = ["mcpplibs"]
+repo        = "https://github.com/mcpplibs/openkal-windows"
+
+[dependencies]
+openkal = "0.5.0"
+
+# The package contributes definitions and no modules. The interface it
+# implements is declared by the specification package, which this package
+# includes and does not re-export.
+
+[build]
+# The libraries this environment's own interfaces live in.
+#
+# ntdll carries the object manager, which is where a name relative to a
+# directory is opened --- the operation openkal declares and Win32 does not
+# offer. synchronization carries the suspension primitive. shell32 carries the
+# operation that splits a command line into a vector, which is this
+# environment's own definition of what its argument vector is and is therefore
+# used rather than reimplemented.
+ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
+
+flags = [
+  { glob = "src/**", cxxflags = ["-fno-exceptions", "-fno-rtti"] },
+]
+
+[features]
+default = []
+
+# Whether this implementation is the whole of the program's environment.
+#
+# Ordinarily a program already carries a runtime that has received control from
+# the loader, and this implementation adds nothing. Where it does not, the entry
+# point is this implementation's, and the link line names it.
+standalone = { defines = ["OKW_STANDALONE"] }
