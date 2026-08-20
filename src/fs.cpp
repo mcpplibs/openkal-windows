@@ -126,7 +126,14 @@ struct listing {
     okw_uptr used;
     okw_uptr at;
     bool     first;
-    unsigned char buffer[8192];
+    // Aligned deliberately. The records this environment writes here begin with
+    // fields it reads as machine words, and it requires the buffer they are
+    // written into to be aligned for them. Placed after three words and a
+    // boolean, an array of bytes lands one past a word boundary, and the
+    // enumeration then reports nothing at all --- while an implementation of
+    // this environment's interfaces that does not check accepts it and returns
+    // the entries, which is the harder way to find this.
+    alignas(16) unsigned char buffer[8192];
     // The name reported to the caller. It belongs to the enumeration rather
     // than to the context performing it: two contexts enumerating two
     // directories would otherwise share one buffer, and openkal requires that
