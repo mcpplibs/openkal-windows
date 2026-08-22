@@ -8,7 +8,7 @@ authors     = ["mcpplibs"]
 repo        = "https://github.com/mcpplibs/openkal-windows"
 
 [dependencies]
-openkal = "0.5.2"
+openkal = { git = "https://github.com/mcpplibs/openkal", branch = "feat/openkal-closure" }
 
 # The package contributes definitions and no modules. The interface it
 # implements is declared by the specification package, which this package
