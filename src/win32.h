@@ -74,6 +74,29 @@ using LPCSTR  = const char*;
 // would make this file wrong for a target it is otherwise correct for.
 #define OKW_API __stdcall
 
+// ⭐⭐ AND WHERE THEY LIVE, WHICH IS NOT AN OPTIMISATION.
+//
+// Every function below is in a DLL, and `<windows.h>` says so with
+// `__declspec(dllimport)`. Omitting it still LINKS: the linker notices the
+// symbol resolves through an import library and synthesises a thunk that jumps
+// through the import table. The program runs, so nothing here fails — and that
+// is exactly why it has to be written rather than discovered.
+//
+// ⚠️ Measured 2026-08-23. This package's own independence check permits
+// `__imp_*` because those names ARE this environment's interface reached
+// through its import table, and it rejects everything else because everything
+// else would be a C runtime. Declaring these without `dllimport` made the
+// objects name them bare, and the check reported twenty-two of this system's
+// own functions as symbols the implementation "must not" reference:
+//
+//     the implementation references a symbol it must not: WriteFile
+//     the implementation references a symbol it must not: HeapAlloc
+//
+// The check was right and the declarations were wrong. It was `<windows.h>`
+// that had been supplying this attribute, and replacing that header without it
+// changed what the objects say about themselves.
+#define OKW_IMPORT __declspec(dllimport)
+
 union LARGE_INTEGER {
     struct { DWORD LowPart; LONG HighPart; } u;
     long long QuadPart;
@@ -216,69 +239,69 @@ enum : DWORD {
 // ── the functions ───────────────────────────────────────────────────────────
 extern "C" {
 
-HANDLE OKW_API GetStdHandle(DWORD);
-BOOL   OKW_API CloseHandle(HANDLE);
-DWORD  OKW_API GetLastError(void);
-DWORD  OKW_API GetFileType(HANDLE);
-BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
-BOOL   OKW_API GetConsoleMode(HANDLE, DWORD*);
+OKW_IMPORT HANDLE OKW_API GetStdHandle(DWORD);
+OKW_IMPORT BOOL   OKW_API CloseHandle(HANDLE);
+OKW_IMPORT DWORD  OKW_API GetLastError(void);
+OKW_IMPORT DWORD  OKW_API GetFileType(HANDLE);
+OKW_IMPORT BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
+OKW_IMPORT BOOL   OKW_API GetConsoleMode(HANDLE, DWORD*);
 
-BOOL   OKW_API ReadFile(HANDLE, LPVOID, DWORD, DWORD*, OVERLAPPED*);
-BOOL   OKW_API WriteFile(HANDLE, LPCVOID, DWORD, DWORD*, OVERLAPPED*);
-BOOL   OKW_API FlushFileBuffers(HANDLE);
-BOOL   OKW_API SetFilePointerEx(HANDLE, LARGE_INTEGER, LARGE_INTEGER*, DWORD);
-HANDLE OKW_API CreateFileW(LPCWSTR, DWORD, DWORD, SECURITY_ATTRIBUTES*,
+OKW_IMPORT BOOL   OKW_API ReadFile(HANDLE, LPVOID, DWORD, DWORD*, OVERLAPPED*);
+OKW_IMPORT BOOL   OKW_API WriteFile(HANDLE, LPCVOID, DWORD, DWORD*, OVERLAPPED*);
+OKW_IMPORT BOOL   OKW_API FlushFileBuffers(HANDLE);
+OKW_IMPORT BOOL   OKW_API SetFilePointerEx(HANDLE, LARGE_INTEGER, LARGE_INTEGER*, DWORD);
+OKW_IMPORT HANDLE OKW_API CreateFileW(LPCWSTR, DWORD, DWORD, SECURITY_ATTRIBUTES*,
                            DWORD, DWORD, HANDLE);
-DWORD  OKW_API GetFinalPathNameByHandleW(HANDLE, LPWSTR, DWORD, DWORD);
-DWORD  OKW_API GetLogicalDriveStringsW(DWORD, LPWSTR);
-DWORD  OKW_API GetCurrentDirectoryW(DWORD, LPWSTR);
+OKW_IMPORT DWORD  OKW_API GetFinalPathNameByHandleW(HANDLE, LPWSTR, DWORD, DWORD);
+OKW_IMPORT DWORD  OKW_API GetLogicalDriveStringsW(DWORD, LPWSTR);
+OKW_IMPORT DWORD  OKW_API GetCurrentDirectoryW(DWORD, LPWSTR);
 
-HANDLE OKW_API GetProcessHeap(void);
-LPVOID OKW_API HeapAlloc(HANDLE, DWORD, unsigned long long);
-BOOL   OKW_API HeapFree(HANDLE, DWORD, LPVOID);
-HLOCAL OKW_API LocalFree(HLOCAL);
+OKW_IMPORT HANDLE OKW_API GetProcessHeap(void);
+OKW_IMPORT LPVOID OKW_API HeapAlloc(HANDLE, DWORD, unsigned long long);
+OKW_IMPORT BOOL   OKW_API HeapFree(HANDLE, DWORD, LPVOID);
+OKW_IMPORT HLOCAL OKW_API LocalFree(HLOCAL);
 
-LPWSTR OKW_API GetCommandLineW(void);
-LPWSTR OKW_API GetEnvironmentStringsW(void);
-BOOL   OKW_API FreeEnvironmentStringsW(LPWSTR);
+OKW_IMPORT LPWSTR OKW_API GetCommandLineW(void);
+OKW_IMPORT LPWSTR OKW_API GetEnvironmentStringsW(void);
+OKW_IMPORT BOOL   OKW_API FreeEnvironmentStringsW(LPWSTR);
 
-BOOL   OKW_API CreateProcessW(LPCWSTR, LPWSTR, SECURITY_ATTRIBUTES*,
+OKW_IMPORT BOOL   OKW_API CreateProcessW(LPCWSTR, LPWSTR, SECURITY_ATTRIBUTES*,
                               SECURITY_ATTRIBUTES*, BOOL, DWORD, LPVOID,
                               LPCWSTR, STARTUPINFOW*, PROCESS_INFORMATION*);
-BOOL   OKW_API GetExitCodeProcess(HANDLE, DWORD*);
-BOOL   OKW_API TerminateProcess(HANDLE, UINT);
-HANDLE OKW_API GetCurrentProcess(void);
-DWORD  OKW_API WaitForSingleObject(HANDLE, DWORD);
+OKW_IMPORT BOOL   OKW_API GetExitCodeProcess(HANDLE, DWORD*);
+OKW_IMPORT BOOL   OKW_API TerminateProcess(HANDLE, UINT);
+OKW_IMPORT HANDLE OKW_API GetCurrentProcess(void);
+OKW_IMPORT DWORD  OKW_API WaitForSingleObject(HANDLE, DWORD);
 
-HANDLE OKW_API CreateThread(SECURITY_ATTRIBUTES*, unsigned long long,
+OKW_IMPORT HANDLE OKW_API CreateThread(SECURITY_ATTRIBUTES*, unsigned long long,
                             DWORD (OKW_API*)(LPVOID), LPVOID, DWORD, DWORD*);
-DWORD  OKW_API GetCurrentThreadId(void);
-void   OKW_API Sleep(DWORD);
-BOOL   OKW_API SwitchToThread(void);
+OKW_IMPORT DWORD  OKW_API GetCurrentThreadId(void);
+OKW_IMPORT void   OKW_API Sleep(DWORD);
+OKW_IMPORT BOOL   OKW_API SwitchToThread(void);
 
 // The address-based wait, which is what openkal.task's suspension primitive
 // rests on here. ⚠️ In `API-MS-Win-Core-Synch-l1-2-0`, which is why the link
 // line names `-lsynchronization` rather than only `-lkernel32`.
-BOOL   OKW_API WaitOnAddress(volatile void*, void*, unsigned long long, DWORD);
-void   OKW_API WakeByAddressSingle(void*);
-void   OKW_API WakeByAddressAll(void*);
+OKW_IMPORT BOOL   OKW_API WaitOnAddress(volatile void*, void*, unsigned long long, DWORD);
+OKW_IMPORT void   OKW_API WakeByAddressSingle(void*);
+OKW_IMPORT void   OKW_API WakeByAddressAll(void*);
 
-void   OKW_API GetSystemTimePreciseAsFileTime(FILETIME*);
-BOOL   OKW_API QueryPerformanceCounter(LARGE_INTEGER*);
-BOOL   OKW_API QueryPerformanceFrequency(LARGE_INTEGER*);
+OKW_IMPORT void   OKW_API GetSystemTimePreciseAsFileTime(FILETIME*);
+OKW_IMPORT BOOL   OKW_API QueryPerformanceCounter(LARGE_INTEGER*);
+OKW_IMPORT BOOL   OKW_API QueryPerformanceFrequency(LARGE_INTEGER*);
 
-int    OKW_API MultiByteToWideChar(UINT, DWORD, LPCSTR, int, LPWSTR, int);
-int    OKW_API WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR, int,
+OKW_IMPORT int    OKW_API MultiByteToWideChar(UINT, DWORD, LPCSTR, int, LPWSTR, int);
+OKW_IMPORT int    OKW_API WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR, int,
                                    LPCSTR, BOOL*);
 
 // From shell32, and the only name this package takes from it.
-LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
+OKW_IMPORT LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
 
 // ── ntdll ───────────────────────────────────────────────────────────────────
 //
 // The object-manager entry points. Their STRUCTURES are declared in win.h and
 // have been since this package was written, for the reason recorded there;
 // these are the calls that take them.
-DWORD OKW_API RtlNtStatusToDosError(long);
+OKW_IMPORT DWORD OKW_API RtlNtStatusToDosError(long);
 
 }  // extern "C"
