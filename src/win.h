@@ -142,28 +142,38 @@ enum : unsigned long {
 };
 
 extern "C" {
-long __stdcall NtCreateFile(void** handle, unsigned long access,
+// ⚠️ `dllimport` HERE TOO, AND IT IS THE SAME FACT AS IN `win32.h`.
+//
+// These live in `ntdll.dll`. Omitting the attribute still links — the linker
+// synthesises a thunk through the import table — but it changes what the OBJECT
+// says about itself, and this package's own independence check reads exactly
+// that. `RtlNtStatusToDosError` is declared in both headers, so leaving one of
+// them without it also produced:
+//
+//     warning: 'okw::RtlNtStatusToDosError' redeclared without 'dllimport'
+//       attribute: previous 'dllimport' ignored [-Winconsistent-dllimport]
+__declspec(dllimport) long __stdcall NtCreateFile(void** handle, unsigned long access,
                             object_attributes* attributes, io_status_block* status,
                             okw_i64* allocation, unsigned long file_attributes,
                             unsigned long share, unsigned long disposition,
                             unsigned long options, void* ea, unsigned long ea_length);
-long __stdcall NtClose(void* handle);
-long __stdcall NtReadFile(void* handle, void* event, void* apc, void* apc_context,
+__declspec(dllimport) long __stdcall NtClose(void* handle);
+__declspec(dllimport) long __stdcall NtReadFile(void* handle, void* event, void* apc, void* apc_context,
                           io_status_block* status, void* buffer, unsigned long length,
                           okw_i64* offset, unsigned long* key);
-long __stdcall NtWriteFile(void* handle, void* event, void* apc, void* apc_context,
+__declspec(dllimport) long __stdcall NtWriteFile(void* handle, void* event, void* apc, void* apc_context,
                            io_status_block* status, const void* buffer, unsigned long length,
                            okw_i64* offset, unsigned long* key);
-long __stdcall NtQueryInformationFile(void* handle, io_status_block* status, void* info,
+__declspec(dllimport) long __stdcall NtQueryInformationFile(void* handle, io_status_block* status, void* info,
                                       unsigned long length, int cls);
-long __stdcall NtSetInformationFile(void* handle, io_status_block* status, void* info,
+__declspec(dllimport) long __stdcall NtSetInformationFile(void* handle, io_status_block* status, void* info,
                                     unsigned long length, int cls);
-long __stdcall NtQueryDirectoryFile(void* handle, void* event, void* apc, void* apc_context,
+__declspec(dllimport) long __stdcall NtQueryDirectoryFile(void* handle, void* event, void* apc, void* apc_context,
                                     io_status_block* status, void* buffer, unsigned long length,
                                     int cls, unsigned char single, unicode_string* pattern,
                                     unsigned char restart);
-long __stdcall NtFlushBuffersFile(void* handle, io_status_block* status);
-unsigned long __stdcall RtlNtStatusToDosError(long status);
+__declspec(dllimport) long __stdcall NtFlushBuffersFile(void* handle, io_status_block* status);
+__declspec(dllimport) unsigned long __stdcall RtlNtStatusToDosError(long status);
 }
 
 inline bool ok(long status) { return status >= 0; }

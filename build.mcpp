@@ -1,0 +1,89 @@
+import mcpp;
+import std;
+
+// ⭐⭐ WHERE THIS SYSTEM'S NAMES LIVE, PUT ON THE CONSUMER'S LINK LINE.
+//
+// `src/win32.h` and `src/win.h` freed the COMPILE from a vendor SDK. The LINK
+// was still reaching for `libkernel32.a` and its three neighbours — files that
+// exist on a machine with mingw installed and nowhere else.
+//
+// ⚠️ Measured 2026-08-22 on a clean CI runner, after every object compiled:
+//
+//     lld: error: unable to find library -lkernel32
+//     lld: error: unable to find library -lntdll
+//     lld: error: unable to find library -lshell32
+//     lld: error: unable to find library -lsynchronization
+//
+// and it had passed on a developer's machine, which had mingw installed. This
+// repository has recorded that shape before: a green that came from history the
+// new machine does not have.
+//
+// ⭐ An import library is a LIST OF NAMES, not code — which is why generating
+// one from `port/*.def` is a complete substitute rather than an approximation,
+// the same reason `openkal-macos/port/libSystem.tbd` is one for that system.
+//
+// ⚠️⚠️ AND ONLY WHERE THE SYSTEM'S OWN ARE ABSENT.
+//
+// On this system they are present, they are the vendor's, and they list every
+// name rather than the forty-five this implementation calls. `-L` is searched
+// first, so supplying ours there would not augment them — it would SHADOW them,
+// and a consumer that calls a forty-sixth would be told there is no such name.
+// That is exactly the defect `openkal-macos` had with its `libSystem` stub, one
+// commit before this was written, and it is the same fix: a substitute is
+// needed where the thing it substitutes for is absent.
+
+namespace {
+
+bool host_is_windows() {
+    const char* h = mcpp::host();
+    return h && std::string_view{h}.contains("windows");
+}
+
+// `llvm-dlltool`, from whatever toolchain actually resolved. ⚠️ Asked for rather
+// than declared: a package that put `xim:llvm` in its dependencies would pin
+// itself to one implementation, and this tool ships with every LLVM.
+std::string dlltool() {
+    const char* dir = mcpp::toolchain_dir();
+    if (dir && *dir) {
+        for (auto candidate : { std::format("{}/llvm-dlltool", dir),
+                                std::format("{}/bin/llvm-dlltool", dir) }) {
+            std::error_code ec;
+            if (std::filesystem::exists(candidate, ec)) return candidate;
+        }
+    }
+    // A toolchain that did not say where it is. `llvm-dlltool` on PATH is the
+    // remaining answer, and if it is not there the run below says so by name.
+    return "llvm-dlltool";
+}
+
+}  // namespace
+
+int main() {
+    mcpp::rerun_if_changed("port/kernel32.def");
+    mcpp::rerun_if_changed("port/ntdll.def");
+    mcpp::rerun_if_changed("port/shell32.def");
+    mcpp::rerun_if_changed("port/synchronization.def");
+
+    if (host_is_windows()) return 0;
+
+    const std::string out = mcpp::out_dir() ? mcpp::out_dir() : ".";
+    const std::string root = mcpp::manifest_dir() ? mcpp::manifest_dir() : ".";
+    const std::string tool = dlltool();
+
+    for (auto name : { "kernel32", "ntdll", "shell32", "synchronization" }) {
+        const auto def = std::format("{}/port/{}.def", root, name);
+        const auto lib = std::format("{}/lib{}.a", out, name);
+        // ⚠️ `-m i386:x86-64` is stated. See port/README.md: the 32-bit ABI
+        // would need `@N` decoration on these names, which is a property of
+        // that ABI rather than of the list.
+        const auto cmd = std::format(
+            "\"{}\" -m i386:x86-64 -d \"{}\" -l \"{}\"", tool, def, lib);
+        if (std::system(cmd.c_str()) != 0) {
+            std::cerr << "openkal-windows: could not build the import library "
+                         "for " << name << " (" << cmd << ")\n";
+            return 1;
+        }
+    }
+    mcpp::link_search(out.c_str());
+    return 0;
+}
