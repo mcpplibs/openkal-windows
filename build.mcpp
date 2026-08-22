@@ -34,9 +34,43 @@ import std;
 
 namespace {
 
+// ⭐⭐ WHICH COMPILER FAMILY RESOLVED — AND WHAT AN ABSENT ANSWER MEANS.
+//
+// ⚠️ READ FROM THE ENVIRONMENT, NOT THROUGH A HELPER. A build program is
+// compiled against the `mcpp` module of whichever tool RUNS it, so naming a
+// helper newer than the released tool makes this package require an unreleased
+// one. Measured 2026-08-22, on every row of three repositories at once:
+//
+//     build.mcpp: error: no member named 'compiler' in namespace 'mcpp'
+//     build.mcpp: error: 'toolchain_dir' is not a member of 'mcpp'
+//
+// — and the second is the more useful of the two, because `toolchain_dir` was
+// the FALLBACK written for the first. The environment variables are the
+// contract and `std::getenv` reads them on every version.
+//
+// ⚠️ AND AN ABSENT VALUE IS NOT "NO COMPILER". Measured against mcpp 2026.8.19.1,
+// which is what CI installs: `MCPP_TARGET_OS`, `MCPP_HOST`, `MCPP_OUT_DIR`,
+// `MCPP_MANIFEST_DIR`, `MCPP_TARGET` and `MCPP_TARGET_ARCH` are all set, and
+// `MCPP_COMPILER` and `MCPP_TOOLCHAIN_DIR` are absent.
+//
+// ⭐ So absent means "a build tool from before the question could be asked" —
+// and such a tool cannot produce the configuration the answer would change. The
+// clang-over-openkal cross to PE arrives on the same release as the variable.
+// The one configuration a tool that predates it can produce is the GCC one, so
+// that is what absent is answered with, and it is a deduction rather than a
+// default.
+std::string compiler_family() {
+    if (const char* v = std::getenv("MCPP_COMPILER"); v && *v) return v;
+    return "gcc";
+}
+
+std::string env_or_empty(const char* name) {
+    const char* v = std::getenv(name);
+    return v ? v : "";
+}
+
 bool host_is_windows() {
-    const char* h = mcpp::host();
-    return h && std::string_view{h}.contains("windows");
+    return env_or_empty("MCPP_HOST").contains("windows");
 }
 
 // The tool that turns a `.def` into an import library.
@@ -48,22 +82,19 @@ bool host_is_windows() {
 //
 //     sh: 1: llvm-dlltool: not found
 //
-// ⭐ So the family is ASKED for rather than inferred from the payload's
-// directory name. `mcpp::compiler()` answers it directly.
+// ⭐ So the family is ASKED for rather than assumed — see `compiler_family()`
+// above for how, and why it is not `mcpp::compiler()`.
 //
 // ⚠️ Asked for rather than DECLARED, too: a package that put `xim:llvm` in its
 // dependencies would pin itself to one implementation of the toolchain.
 std::string dlltool() {
-    const std::string dir = mcpp::toolchain_dir() ? mcpp::toolchain_dir() : "";
-    const std::string fam = mcpp::compiler() ? mcpp::compiler() : "";
+    const std::string dir = env_or_empty("MCPP_TOOLCHAIN_DIR");
 
-    std::vector<std::string> names;
-    if (fam == "gcc") names = { "x86_64-w64-mingw32-dlltool", "dlltool" };
-    else              names = { "llvm-dlltool" };
-    // Whichever family it is, the other's tool is a legitimate fallback: both
-    // read the same `.def` and both take `-m i386:x86-64`.
-    for (auto extra : { "llvm-dlltool", "x86_64-w64-mingw32-dlltool", "dlltool" })
-        if (std::ranges::find(names, extra) == names.end()) names.push_back(extra);
+    // Only reached under clang (see `main`), so LLVM's spelling is first. The
+    // other two are kept because both read the same `.def` and both take
+    // `-m i386:x86-64`, so either is a correct answer if it is what is there.
+    const std::vector<std::string> names = {
+        "llvm-dlltool", "x86_64-w64-mingw32-dlltool", "dlltool" };
 
     if (!dir.empty()) {
         for (const auto& n : names)
@@ -88,8 +119,22 @@ int main() {
 
     if (host_is_windows()) return 0;
 
-    const std::string out = mcpp::out_dir() ? mcpp::out_dir() : ".";
-    const std::string root = mcpp::manifest_dir() ? mcpp::manifest_dir() : ".";
+    // ⭐⭐ AND ONLY UNDER CLANG, WHICH IS THE OTHER HALF OF THE SAME FACT.
+    //
+    // A GCC toolchain for this format IS a mingw payload, and a mingw payload
+    // carries these four libraries — complete ones, with every name rather than
+    // the forty-five this implementation calls. Generating ours there would
+    // shadow them for the same reason supplying them on this system would (see
+    // the note above), and it would need `dlltool` under a different name into
+    // the bargain.
+    //
+    // ⇒ The gap this file exists to close is the clang one: the LLVM payload is
+    // a compiler, not a system, and it brings no import libraries at all.
+    if (compiler_family() != "clang") return 0;
+
+    const std::string out  = env_or_empty("MCPP_OUT_DIR");
+    const std::string root = env_or_empty("MCPP_MANIFEST_DIR");
+    if (out.empty() || root.empty()) return 0;
     const std::string tool = dlltool();
 
     for (auto name : { "kernel32", "ntdll", "shell32", "synchronization" }) {
