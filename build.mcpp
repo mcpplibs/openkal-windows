@@ -39,21 +39,43 @@ bool host_is_windows() {
     return h && std::string_view{h}.contains("windows");
 }
 
-// `llvm-dlltool`, from whatever toolchain actually resolved. ⚠️ Asked for rather
-// than declared: a package that put `xim:llvm` in its dependencies would pin
-// itself to one implementation, and this tool ships with every LLVM.
+// The tool that turns a `.def` into an import library.
+//
+// ⚠️ ITS NAME IS A PROPERTY OF THE COMPILER FAMILY, NOT OF THE PACKAGE. LLVM
+// spells it `llvm-dlltool`; binutils spells it `dlltool`, and a cross binutils
+// prefixes it with the triple. Measured 2026-08-22 — this file named only the
+// first, and the row of CI that builds with a GCC toolchain said:
+//
+//     sh: 1: llvm-dlltool: not found
+//
+// ⭐ So the family is ASKED for rather than inferred from the payload's
+// directory name. `mcpp::compiler()` answers it directly.
+//
+// ⚠️ Asked for rather than DECLARED, too: a package that put `xim:llvm` in its
+// dependencies would pin itself to one implementation of the toolchain.
 std::string dlltool() {
-    const char* dir = mcpp::toolchain_dir();
-    if (dir && *dir) {
-        for (auto candidate : { std::format("{}/llvm-dlltool", dir),
-                                std::format("{}/bin/llvm-dlltool", dir) }) {
-            std::error_code ec;
-            if (std::filesystem::exists(candidate, ec)) return candidate;
-        }
+    const std::string dir = mcpp::toolchain_dir() ? mcpp::toolchain_dir() : "";
+    const std::string fam = mcpp::compiler() ? mcpp::compiler() : "";
+
+    std::vector<std::string> names;
+    if (fam == "gcc") names = { "x86_64-w64-mingw32-dlltool", "dlltool" };
+    else              names = { "llvm-dlltool" };
+    // Whichever family it is, the other's tool is a legitimate fallback: both
+    // read the same `.def` and both take `-m i386:x86-64`.
+    for (auto extra : { "llvm-dlltool", "x86_64-w64-mingw32-dlltool", "dlltool" })
+        if (std::ranges::find(names, extra) == names.end()) names.push_back(extra);
+
+    if (!dir.empty()) {
+        for (const auto& n : names)
+            for (auto candidate : { std::format("{}/{}", dir, n),
+                                    std::format("{}/bin/{}", dir, n) }) {
+                std::error_code ec;
+                if (std::filesystem::exists(candidate, ec)) return candidate;
+            }
     }
-    // A toolchain that did not say where it is. `llvm-dlltool` on PATH is the
-    // remaining answer, and if it is not there the run below says so by name.
-    return "llvm-dlltool";
+    // Nothing beside the driver. The first name is then tried on PATH, and if it
+    // is not there the run below reports it by name.
+    return names.front();
 }
 
 }  // namespace
