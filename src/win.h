@@ -26,14 +26,17 @@
 // one layer down, there is nothing to resolve.
 #pragma once
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <shellapi.h>
+// ⭐ THIS SYSTEM'S INTERFACE, DECLARED BY THIS PACKAGE.
+//
+// It used to be `<windows.h>` and `<shellapi.h>` — a vendor SDK that had to be
+// found somewhere, and "somewhere" turned out to be whichever copy the machine
+// happened to have. win32.h records the measurement and the method.
+//
+// ⚠️ AND THE ARGUMENT IS THE ONE THIS FILE ALREADY MAKES, ten lines down, about
+// `<winternl.h>`. That argument was always the same argument; it had only been
+// applied to the half where one TOOLCHAIN disagrees with another, and not to
+// the half where one MACHINE disagrees with another.
+#include "win32.h"
 
 // The width of a machine word is taken from the specification rather than from
 // the compiler, because the three compilers this package is built with do not
