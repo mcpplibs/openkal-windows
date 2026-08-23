@@ -4,6 +4,16 @@ name        = "openkal-windows"
 version     = "0.1.1"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
+
+# The layer this package supplies, in the vocabulary the engine resolves.
+#
+# `mcpp:kernel-abi` names the platform interface a C library sits on. On a
+# traditional stack that seam is unnamed — a C library issues system calls or
+# calls the platform's own entry points directly — and naming it is what lets
+# one C library sit above several platforms. `=openkal` is the interface this
+# package answers to; several packages answer to it and the engine knows none
+# of them by name.
+provides    = ["mcpp:kernel-abi=openkal"]
 authors     = ["mcpplibs"]
 repo        = "https://github.com/mcpplibs/openkal-windows"
 
