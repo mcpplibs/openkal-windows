@@ -109,9 +109,48 @@ Ninety-one observations held, none failed, none went unexamined.
 ## Toolchains
 
 `x86_64-windows-gnu` (GCC producing PE), and the MSVC ABI through `llvm`. The
-implementation uses no GNU extension: the object manager's declarations are
-written out in `src/win.h` rather than taken from `<winternl.h>`, because that
-header is complete in one toolchain's sources and partial in another's.
+implementation uses no GNU extension.
+
+## This package takes no vendor SDK, on either side
+
+The object manager's declarations were written out in `src/win.h` from the
+beginning, with the reason recorded there: `<winternl.h>` is complete in one
+toolchain's sources and partial in another's. That argument was always the same
+argument, and it had only been applied to the half where one toolchain disagrees
+with another rather than to the half where one MACHINE disagrees with another.
+
+**Declarations.** `src/win32.h` now declares the whole of what this
+implementation calls — forty-seven functions and the types and constants they
+need — so nothing here opens `<windows.h>`. The list was not read out of the
+sources: the header was removed and the compiler was asked what was missing.
+Each name carries `__declspec(dllimport)`, which is not an optimisation — it is
+what makes the objects say that these are this environment's interfaces reached
+through its import table, and this package's own independence check reads exactly
+that.
+
+**Where they live.** `port/*.def` names the library each of those forty-five
+symbols is exported from, and the build program turns them into import libraries.
+An import library is a list of names rather than code, which is why generating
+one is a complete substitute rather than an approximation. The DLL each name
+belongs to was read out of the corresponding mingw import library rather than
+assumed — `WaitOnAddress` and its two neighbours are **not** in `kernel32.dll`,
+and putting them there produces an import table that links and then fails to
+bind.
+
+⚠️ **Supplied only where the system's own are absent.** On this system they are
+present, they are the vendor's, and they list every name rather than the
+forty-five this implementation calls; `-L` is searched first, so supplying ours
+there would shadow them and a consumer calling a forty-sixth would be told there
+is no such name.
+
+⚠️ Measured 2026-08-22, on a clean continuous-integration runner, after every
+object had compiled:
+
+```
+lld: error: unable to find library -lkernel32
+```
+
+The compile had been free of a vendor SDK since `win32.h`; the link had not.
 
 ## License
 
