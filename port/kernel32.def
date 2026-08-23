@@ -1,0 +1,41 @@
+; The bulk of this system's interface. Read out of the objects of a
+; complete build, so the list is what is CALLED rather than what exists.
+;
+; Generated into an import library by build.mcpp; see port/README.md.
+LIBRARY KERNEL32.dll
+EXPORTS
+CloseHandle
+CreateFileW
+CreateProcessW
+CreateThread
+FlushFileBuffers
+FreeEnvironmentStringsW
+GetCommandLineW
+GetConsoleMode
+GetCurrentDirectoryW
+GetCurrentProcess
+GetCurrentThreadId
+GetEnvironmentStringsW
+GetExitCodeProcess
+GetFileType
+GetFinalPathNameByHandleW
+GetLastError
+GetLogicalDriveStringsW
+GetProcessHeap
+GetStdHandle
+GetSystemTimePreciseAsFileTime
+HeapAlloc
+HeapFree
+LocalFree
+MultiByteToWideChar
+QueryPerformanceCounter
+QueryPerformanceFrequency
+ReadFile
+SetFilePointerEx
+SetHandleInformation
+Sleep
+SwitchToThread
+TerminateProcess
+WaitForSingleObject
+WideCharToMultiByte
+WriteFile

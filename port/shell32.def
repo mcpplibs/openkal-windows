@@ -1,0 +1,7 @@
+; One name. The system's own splitting of a command line, which this
+; implementation uses rather than reimplementing the rule.
+;
+; Generated into an import library by build.mcpp; see port/README.md.
+LIBRARY SHELL32.dll
+EXPORTS
+CommandLineToArgvW

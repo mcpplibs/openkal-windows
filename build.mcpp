@@ -1,0 +1,156 @@
+import mcpp;
+import std;
+
+// ⭐⭐ WHERE THIS SYSTEM'S NAMES LIVE, PUT ON THE CONSUMER'S LINK LINE.
+//
+// `src/win32.h` and `src/win.h` freed the COMPILE from a vendor SDK. The LINK
+// was still reaching for `libkernel32.a` and its three neighbours — files that
+// exist on a machine with mingw installed and nowhere else.
+//
+// ⚠️ Measured 2026-08-22 on a clean CI runner, after every object compiled:
+//
+//     lld: error: unable to find library -lkernel32
+//     lld: error: unable to find library -lntdll
+//     lld: error: unable to find library -lshell32
+//     lld: error: unable to find library -lsynchronization
+//
+// and it had passed on a developer's machine, which had mingw installed. This
+// repository has recorded that shape before: a green that came from history the
+// new machine does not have.
+//
+// ⭐ An import library is a LIST OF NAMES, not code — which is why generating
+// one from `port/*.def` is a complete substitute rather than an approximation,
+// the same reason `openkal-macos/port/libSystem.tbd` is one for that system.
+//
+// ⚠️⚠️ AND ONLY WHERE THE SYSTEM'S OWN ARE ABSENT.
+//
+// On this system they are present, they are the vendor's, and they list every
+// name rather than the forty-five this implementation calls. `-L` is searched
+// first, so supplying ours there would not augment them — it would SHADOW them,
+// and a consumer that calls a forty-sixth would be told there is no such name.
+// That is exactly the defect `openkal-macos` had with its `libSystem` stub, one
+// commit before this was written, and it is the same fix: a substitute is
+// needed where the thing it substitutes for is absent.
+
+namespace {
+
+// ⭐⭐ WHICH COMPILER FAMILY RESOLVED — AND WHAT AN ABSENT ANSWER MEANS.
+//
+// ⚠️ READ FROM THE ENVIRONMENT, NOT THROUGH A HELPER. A build program is
+// compiled against the `mcpp` module of whichever tool RUNS it, so naming a
+// helper newer than the released tool makes this package require an unreleased
+// one. Measured 2026-08-22, on every row of three repositories at once:
+//
+//     build.mcpp: error: no member named 'compiler' in namespace 'mcpp'
+//     build.mcpp: error: 'toolchain_dir' is not a member of 'mcpp'
+//
+// — and the second is the more useful of the two, because `toolchain_dir` was
+// the FALLBACK written for the first. The environment variables are the
+// contract and `std::getenv` reads them on every version.
+//
+// ⚠️ AND AN ABSENT VALUE IS NOT "NO COMPILER". Measured against mcpp 2026.8.19.1,
+// which is what CI installs: `MCPP_TARGET_OS`, `MCPP_HOST`, `MCPP_OUT_DIR`,
+// `MCPP_MANIFEST_DIR`, `MCPP_TARGET` and `MCPP_TARGET_ARCH` are all set, and
+// `MCPP_COMPILER` and `MCPP_TOOLCHAIN_DIR` are absent.
+//
+// ⭐ So absent means "a build tool from before the question could be asked" —
+// and such a tool cannot produce the configuration the answer would change. The
+// clang-over-openkal cross to PE arrives on the same release as the variable.
+// The one configuration a tool that predates it can produce is the GCC one, so
+// that is what absent is answered with, and it is a deduction rather than a
+// default.
+std::string compiler_family() {
+    if (const char* v = std::getenv("MCPP_COMPILER"); v && *v) return v;
+    return "gcc";
+}
+
+std::string env_or_empty(const char* name) {
+    const char* v = std::getenv(name);
+    return v ? v : "";
+}
+
+bool host_is_windows() {
+    return env_or_empty("MCPP_HOST").contains("windows");
+}
+
+// The tool that turns a `.def` into an import library.
+//
+// ⚠️ ITS NAME IS A PROPERTY OF THE COMPILER FAMILY, NOT OF THE PACKAGE. LLVM
+// spells it `llvm-dlltool`; binutils spells it `dlltool`, and a cross binutils
+// prefixes it with the triple. Measured 2026-08-22 — this file named only the
+// first, and the row of CI that builds with a GCC toolchain said:
+//
+//     sh: 1: llvm-dlltool: not found
+//
+// ⭐ So the family is ASKED for rather than assumed — see `compiler_family()`
+// above for how, and why it is not `mcpp::compiler()`.
+//
+// ⚠️ Asked for rather than DECLARED, too: a package that put `xim:llvm` in its
+// dependencies would pin itself to one implementation of the toolchain.
+std::string dlltool() {
+    const std::string dir = env_or_empty("MCPP_TOOLCHAIN_DIR");
+
+    // Only reached under clang (see `main`), so LLVM's spelling is first. The
+    // other two are kept because both read the same `.def` and both take
+    // `-m i386:x86-64`, so either is a correct answer if it is what is there.
+    const std::vector<std::string> names = {
+        "llvm-dlltool", "x86_64-w64-mingw32-dlltool", "dlltool" };
+
+    if (!dir.empty()) {
+        for (const auto& n : names)
+            for (auto candidate : { std::format("{}/{}", dir, n),
+                                    std::format("{}/bin/{}", dir, n) }) {
+                std::error_code ec;
+                if (std::filesystem::exists(candidate, ec)) return candidate;
+            }
+    }
+    // Nothing beside the driver. The first name is then tried on PATH, and if it
+    // is not there the run below reports it by name.
+    return names.front();
+}
+
+}  // namespace
+
+int main() {
+    mcpp::rerun_if_changed("port/kernel32.def");
+    mcpp::rerun_if_changed("port/ntdll.def");
+    mcpp::rerun_if_changed("port/shell32.def");
+    mcpp::rerun_if_changed("port/synchronization.def");
+
+    if (host_is_windows()) return 0;
+
+    // ⭐⭐ AND ONLY UNDER CLANG, WHICH IS THE OTHER HALF OF THE SAME FACT.
+    //
+    // A GCC toolchain for this format IS a mingw payload, and a mingw payload
+    // carries these four libraries — complete ones, with every name rather than
+    // the forty-five this implementation calls. Generating ours there would
+    // shadow them for the same reason supplying them on this system would (see
+    // the note above), and it would need `dlltool` under a different name into
+    // the bargain.
+    //
+    // ⇒ The gap this file exists to close is the clang one: the LLVM payload is
+    // a compiler, not a system, and it brings no import libraries at all.
+    if (compiler_family() != "clang") return 0;
+
+    const std::string out  = env_or_empty("MCPP_OUT_DIR");
+    const std::string root = env_or_empty("MCPP_MANIFEST_DIR");
+    if (out.empty() || root.empty()) return 0;
+    const std::string tool = dlltool();
+
+    for (auto name : { "kernel32", "ntdll", "shell32", "synchronization" }) {
+        const auto def = std::format("{}/port/{}.def", root, name);
+        const auto lib = std::format("{}/lib{}.a", out, name);
+        // ⚠️ `-m i386:x86-64` is stated. See port/README.md: the 32-bit ABI
+        // would need `@N` decoration on these names, which is a property of
+        // that ABI rather than of the list.
+        const auto cmd = std::format(
+            "\"{}\" -m i386:x86-64 -d \"{}\" -l \"{}\"", tool, def, lib);
+        if (std::system(cmd.c_str()) != 0) {
+            std::cerr << "openkal-windows: could not build the import library "
+                         "for " << name << " (" << cmd << ")\n";
+            return 1;
+        }
+    }
+    mcpp::link_search(out.c_str());
+    return 0;
+}

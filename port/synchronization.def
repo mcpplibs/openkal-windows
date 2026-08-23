@@ -1,0 +1,11 @@
+; The suspension primitive. ⚠️ NOT IN kernel32.dll — these three live in
+; the API set below, and an import table naming the wrong library links and
+; then fails to bind. Read out of mingw's own libsynchronization.a rather
+; than assumed.
+;
+; Generated into an import library by build.mcpp; see port/README.md.
+LIBRARY api-ms-win-core-synch-l1-2-0.dll
+EXPORTS
+WaitOnAddress
+WakeByAddressAll
+WakeByAddressSingle

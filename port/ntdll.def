@@ -1,0 +1,13 @@
+; The object manager. `src/win.h` declares these, with the reason: a name
+; relative to a directory is what this layer offers and the documented layer
+; above it does not.
+;
+; Generated into an import library by build.mcpp; see port/README.md.
+LIBRARY ntdll.dll
+EXPORTS
+NtClose
+NtCreateFile
+NtQueryDirectoryFile
+NtQueryInformationFile
+NtSetInformationFile
+RtlNtStatusToDosError
