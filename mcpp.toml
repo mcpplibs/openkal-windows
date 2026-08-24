@@ -1,7 +1,7 @@
 [package]
 namespace   = "mcpplibs"
 name        = "openkal-windows"
-version     = "0.1.4"
+version     = "0.1.5"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
 
@@ -18,7 +18,7 @@ authors     = ["mcpplibs"]
 repo        = "https://github.com/mcpplibs/openkal-windows"
 
 [dependencies]
-openkal = "0.6.0"
+openkal = "0.7.0"
 
 # The package contributes definitions and no modules. The interface it
 # implements is declared by the specification package, which this package
@@ -49,7 +49,7 @@ openkal = "0.6.0"
 # predicate the second one linked with none of these libraries and failed on
 # `GetStdHandle`.
 [target.'cfg(all(windows, not(env = "msvc")))'.build]
-ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
+ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt"]
 
 # Exceptions and run-time type information, on the one ABI where their absence
 # is asserted.
@@ -67,7 +67,8 @@ ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
 # nothing to say about how a program that has a runtime unwinds.
 cxxflags = ["-fno-exceptions", "-fno-rtti"]
 
-# The other ABI names them in src/win.cpp instead, where its compilers record
+# The other ABI names them in the sources instead --- src/win.cpp for the four
+# above and src/random.cpp for bcrypt --- where its compilers record
 # the requirement in the object they produce. A library named on the link line
 # there would have to be named again by every program that links this package;
 # a library named in the object travels with it.
