@@ -1,7 +1,7 @@
 [package]
 namespace   = "mcpplibs"
 name        = "openkal-windows"
-version     = "0.1.3"
+version     = "0.1.4"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
 
@@ -38,7 +38,17 @@ openkal = "0.6.0"
 # the linker and the other as an input file. Naming them once in the spelling of
 # either would make this package build under two of the three toolchains it is
 # written for.
-[target.'cfg(all(windows, env = "gnu"))'.build]
+# ⚠️ THE PREDICATE IS THE OBJECT ABI, NOT THE C LIBRARY.
+#
+# These four are Win32 import libraries — a property of the platform interface
+# this package implements. `env = "gnu"` was standing in for "the GNU/PE ABI
+# rather than the MSVC one", and on a traditional stack the two coincide. They
+# stop coinciding the moment the C library comes from the dependency graph: a
+# build of `x86_64-windows-gnu` over openkal resolves musl, and one spelled
+# `x86_64-windows-musl` is the same build under an honest name. Under the old
+# predicate the second one linked with none of these libraries and failed on
+# `GetStdHandle`.
+[target.'cfg(all(windows, not(env = "msvc")))'.build]
 ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
 
 # Exceptions and run-time type information, on the one ABI where their absence
