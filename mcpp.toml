@@ -51,6 +51,24 @@ openkal = "0.7.0"
 [target.'cfg(all(windows, not(env = "msvc")))'.build]
 ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt"]
 
+# ⚠️ AND THE SAME ONE LIBRARY ON THE MSVC SIDE, WHICH UNTIL NOW NEEDED NONE.
+#
+# The block above lists the four this implementation calls into, and the MSVC
+# side never needed a list: its SDK links the usual set implicitly, so a
+# `ldflags` entry there would have been noise. `openkal.random` changes that —
+# `BCryptGenRandom` is in `bcrypt.lib`, and that one is not among the implicit
+# set on either the MSVC toolchain or clang's `windows-msvc` target.
+#
+# Measured on the conformance matrix, both Windows rows:
+#
+#     lld-link: error: undefined symbol: __declspec(dllimport) BCryptGenRandom
+#
+# ⚠️ The predicate above is `not(env = "msvc")`, so neither row saw the entry
+# there. The library is named once per side because the two sides spell a
+# library differently and share no list.
+[target.'cfg(all(windows, env = "msvc"))'.build]
+ldflags = ["-lbcrypt"]
+
 # Exceptions and run-time type information, on the one ABI where their absence
 # is asserted.
 #
