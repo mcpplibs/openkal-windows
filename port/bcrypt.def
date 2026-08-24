@@ -5,10 +5,12 @@
 ; handle would give openkal.random an initialisation order it does not have.
 ;
 ; ⚠️ `ProcessPrng` (bcryptprimitives.dll) was tried first: fewer moving parts,
-; and what Chromium and Rust use. It fails on a WINDOWS HOST, where this file's
-; generated import libraries are not built at all --- `build.mcpp` returns
-; immediately there, a real SDK being present --- and no SDK in either toolchain
-; exports that name. `libbcrypt.a` exports the name below on both.
+; and what Chromium and Rust use. It fails on a WINDOWS HOST, where these
+; generated libraries are not built at all --- `build.mcpp` returns immediately
+; there, the vendor's own being present and complete --- and the Windows SDK
+; ships no import library for `bcryptprimitives.dll`. The name below is listed
+; by `bcrypt.lib`, so it resolves through the vendor's libraries and through
+; this file alike.
 ;
 ; Generated into an import library by build.mcpp; see port/README.md.
 LIBRARY bcrypt.dll

@@ -9,16 +9,28 @@
 // takes a null handle, which is exactly what is wanted here.
 //
 // ⚠️ AND NOT `ProcessPrng`, WHICH WAS TRIED FIRST AND FAILS ON A WINDOWS HOST.
-// That name lives in `bcryptprimitives.dll` and no import library in either
-// toolchain exports it: mingw ships `libbcrypt.a` and not the primitives, and
-// this package generates its own import libraries only when cross-compiling
-// (`build.mcpp` returns immediately on a Windows host, where a real SDK is
-// present). Measured — the cross build linked and the native one did not:
 //
 //     lld-link: error: undefined symbol: __declspec(dllimport) ProcessPrng
 //
+// The cross build linked and the native one did not, and the asymmetry is in
+// where the import library comes from. Cross-compiling, this package generates
+// its own from `port/*.def` — a list of names, so a name it lists is a name it
+// has. On a Windows host `build.mcpp` returns immediately and the VENDOR's
+// import libraries are used, because they are present and complete; and the
+// Windows SDK ships `bcrypt.lib` but no import library for
+// `bcryptprimitives.dll`. `ProcessPrng` is documented and has no `.lib`.
+//
 // ⭐ A backend that links on one host and not another is not a backend. The
-// name below is in `libbcrypt.a` on both.
+// name below is exported by `bcrypt.dll` and listed by `bcrypt.lib`, so it
+// resolves through the vendor's libraries and through this package's generated
+// one alike.
+//
+// ⚠️ THE FIRST DIAGNOSIS OF THIS WAS WRONG AND IS RECORDED SO IT IS NOT REPEATED:
+// it read `/usr/x86_64-w64-mingw32/lib` and concluded from mingw's contents.
+// mingw is not part of this ecosystem — it is the very thing `build.mcpp`
+// exists to stop depending on, as the note at the top of that file says. What
+// this backend links against is either the vendor's SDK or this package's own
+// generated libraries, and never a third party's.
 #include "win.h"
 #include <openkal/random.h>
 
