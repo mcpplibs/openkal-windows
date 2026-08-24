@@ -49,7 +49,7 @@ openkal = "0.6.0"
 # predicate the second one linked with none of these libraries and failed on
 # `GetStdHandle`.
 [target.'cfg(all(windows, not(env = "msvc")))'.build]
-ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32"]
+ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcryptprimitives"]
 
 # Exceptions and run-time type information, on the one ABI where their absence
 # is asserted.

@@ -113,6 +113,7 @@ std::string dlltool() {
 
 int main() {
     mcpp::rerun_if_changed("port/kernel32.def");
+    mcpp::rerun_if_changed("port/bcryptprimitives.def");
     mcpp::rerun_if_changed("port/ntdll.def");
     mcpp::rerun_if_changed("port/shell32.def");
     mcpp::rerun_if_changed("port/synchronization.def");
@@ -137,7 +138,8 @@ int main() {
     if (out.empty() || root.empty()) return 0;
     const std::string tool = dlltool();
 
-    for (auto name : { "kernel32", "ntdll", "shell32", "synchronization" }) {
+    for (auto name : { "kernel32", "ntdll", "shell32", "synchronization",
+                       "bcryptprimitives" }) {
         const auto def = std::format("{}/port/{}.def", root, name);
         const auto lib = std::format("{}/lib{}.a", out, name);
         // ⚠️ `-m i386:x86-64` is stated. See port/README.md: the 32-bit ABI

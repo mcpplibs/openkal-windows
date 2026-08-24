@@ -1,0 +1,13 @@
+; The system's random generator, and nothing else from this library.
+;
+; ⭐ ProcessPrng RATHER THAN BCryptGenRandom, AND THE DIFFERENCE IS A HANDLE.
+; The documented CNG entry point takes an algorithm handle, which this backend
+; would have to open on every call or cache — and caching one means having an
+; initialisation order. `ProcessPrng` is the same generator without the handle;
+; it has been present since Windows 10 and is what Chromium and Rust's standard
+; library moved to for these reasons.
+;
+; Generated into an import library by build.mcpp; see port/README.md.
+LIBRARY bcryptprimitives.dll
+EXPORTS
+ProcessPrng
