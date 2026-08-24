@@ -31,6 +31,26 @@
 // exists to stop depending on, as the note at the top of that file says. What
 // this backend links against is either the vendor's SDK or this package's own
 // generated libraries, and never a third party's.
+// The library this one interface lives in, named the way src/win.cpp names the
+// other four and for the reason given there. It is here rather than beside
+// them because a directive travels in the object that carries it, and the
+// object a linker pulls in for `kal_random_fill` is this one.
+//
+// ⚠️ TWO SPELLINGS IN THE MANIFEST WERE TRIED BEFORE THIS AND BOTH WERE PUSHED,
+// while the mechanism was already established in this package and named four
+// lines below the block being edited. `ldflags` reaches the command line
+// verbatim, and the two toolchains that `env = "msvc"` selects reject each
+// other's word for a library:
+//
+//     LINK.EXE      -lbcrypt   → LNK4044: unrecognized option '/lbcrypt'
+//     clang++       bcrypt.lib → error: no such file or directory
+//
+// `cfg()` cannot separate them — its four keys name the target, and which
+// compiler drives the link is not a property of the target.
+#if defined(_MSC_VER)
+#pragma comment(lib, "bcrypt.lib")
+#endif
+
 #include "win.h"
 #include <openkal/random.h>
 

@@ -51,40 +51,6 @@ openkal = "0.7.0"
 [target.'cfg(all(windows, not(env = "msvc")))'.build]
 ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt"]
 
-# ⚠️ AND THE SAME ONE LIBRARY ON THE MSVC SIDE, WHICH UNTIL NOW NEEDED NONE.
-#
-# The block above lists the four this implementation calls into, and the MSVC
-# side never needed a list: its SDK links the usual set implicitly, so a
-# `ldflags` entry there would have been noise. `openkal.random` changes that —
-# `BCryptGenRandom` is in `bcrypt.lib`, and that one is not among the implicit
-# set on either the MSVC toolchain or clang's `windows-msvc` target.
-#
-# Measured on the conformance matrix, both Windows rows:
-#
-#     lld-link: error: undefined symbol: __declspec(dllimport) BCryptGenRandom
-#
-# ⚠️ The predicate above is `not(env = "msvc")`, so neither row saw the entry
-# there. The library is named once per side because the two sides spell a
-# library differently and share no list.
-#
-# ⭐ AND THE SPELLING HERE IS `bcrypt.lib`, NOT `-lbcrypt`. `ldflags` reaches
-# the command line verbatim; mcpp's dialect abstraction covers the flags it
-# generates itself, not the ones a manifest writes. The two rows this
-# predicate selects do not drive the same program: clang drives lld-link and
-# translates for it, while `msvc@system` drives LINK.EXE directly, and LINK
-# reads `-` and `/` as the same prefix — so `-lbcrypt` arrives as an option
-# named `l`:
-#
-#     LINK : warning LNK4044: unrecognized option '/lbcrypt'; ignored
-#     random.obj : error LNK2019: unresolved external symbol __imp_BCryptGenRandom
-#
-# One spelling serves both, which is why this stays a single entry. Measured
-# with `clang --target=x86_64-pc-windows-msvc -### … -fuse-ld=lld`: the driver
-# emits `bcrypt.lib` to lld-link for `-lbcrypt` and for `bcrypt.lib` alike, so
-# the clang link line is unchanged by this and only LINK.EXE sees a difference.
-[target.'cfg(all(windows, env = "msvc"))'.build]
-ldflags = ["bcrypt.lib"]
-
 # Exceptions and run-time type information, on the one ABI where their absence
 # is asserted.
 #
@@ -101,7 +67,8 @@ ldflags = ["bcrypt.lib"]
 # nothing to say about how a program that has a runtime unwinds.
 cxxflags = ["-fno-exceptions", "-fno-rtti"]
 
-# The other ABI names them in src/win.cpp instead, where its compilers record
+# The other ABI names them in the sources instead --- src/win.cpp for the four
+# above and src/random.cpp for bcrypt --- where its compilers record
 # the requirement in the object they produce. A library named on the link line
 # there would have to be named again by every program that links this package;
 # a library named in the object travels with it.
