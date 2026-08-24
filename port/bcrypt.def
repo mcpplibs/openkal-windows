@@ -1,0 +1,16 @@
+; The system's random generator, and nothing else from this library.
+;
+; ⭐ BCryptGenRandom WITH BCRYPT_USE_SYSTEM_PREFERRED_RNG, WHICH TAKES A NULL
+; HANDLE. The ordinary use of this call opens an algorithm handle first, and a
+; handle would give openkal.random an initialisation order it does not have.
+;
+; ⚠️ `ProcessPrng` (bcryptprimitives.dll) was tried first: fewer moving parts,
+; and what Chromium and Rust use. It fails on a WINDOWS HOST, where this file's
+; generated import libraries are not built at all --- `build.mcpp` returns
+; immediately there, a real SDK being present --- and no SDK in either toolchain
+; exports that name. `libbcrypt.a` exports the name below on both.
+;
+; Generated into an import library by build.mcpp; see port/README.md.
+LIBRARY bcrypt.dll
+EXPORTS
+BCryptGenRandom
