@@ -6,12 +6,14 @@ LIBRARY KERNEL32.dll
 EXPORTS
 CloseHandle
 CreateFileW
+CreatePipe
 CreateProcessW
 CreateThread
 FlushFileBuffers
 FreeEnvironmentStringsW
 GetCommandLineW
 GetConsoleMode
+GetConsoleScreenBufferInfo
 GetCurrentDirectoryW
 GetCurrentProcess
 GetCurrentThreadId
@@ -31,6 +33,7 @@ MultiByteToWideChar
 QueryPerformanceCounter
 QueryPerformanceFrequency
 ReadFile
+SetConsoleMode
 SetFilePointerEx
 SetHandleInformation
 Sleep
