@@ -33,6 +33,7 @@ HeapFree
 LoadLibraryW
 LocalFree
 MultiByteToWideChar
+PeekNamedPipe
 QueryPerformanceCounter
 QueryPerformanceFrequency
 ReadFile

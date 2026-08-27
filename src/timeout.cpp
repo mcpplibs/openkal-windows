@@ -9,22 +9,30 @@
 // socket would transfer without blocking, so a bounded read is a bounded wait
 // for readiness followed by the ordinary read.
 //
-// ⚠️⚠️ AND `WSAPoll' ANSWERS FOR SOCKETS AND FOR NOTHING ELSE, WHICH IS THE ONE
+// ⚠️⚠️ AND NO SINGLE CALL ANSWERS FOR EVERY RESOURCE HERE, WHICH IS THE ONE
 // PLACE THIS SYSTEM DIFFERS FROM THE OTHER TWO IN KIND RATHER THAN IN SPELLING.
 //
-// There, one call answers for every descriptor. Here a socket and a file are
-// different kinds of object and the readiness call takes only the first; a pipe
-// is asked with `PeekNamedPipe', a file is always ready, and a console has its
-// own enquiry. openkal.timeout's header anticipates exactly this: "AN
-// IMPLEMENTATION MAY PROVIDE THIS FOR SOME OF ITS RESOURCES AND NOT OTHERS, and
-// reports kal_err_not_supported for the rest. That is not the defect clause 6.4
-// describes."
+// There, one call answers for every descriptor. Here a socket, a pipe and a
+// file are different kinds of object: `WSAPoll' takes only the first, a pipe is
+// asked with `PeekNamedPipe', and a file is always ready because a read from
+// one does not wait. Three enquiries, one per kind, chosen by asking what the
+// handle is.
 //
-// ⇒ `kal_timeout_read' and `kal_timeout_write' upon a stream that is not a
-// socket report `kal_err_not_supported'. That is a stated answer a caller can
-// act upon --- and it is the honest one, because the alternative is to wait a
-// while and then attempt the transfer anyway, which would report `kal_err_again'
-// for a pipe that had data and block for one that did not.
+// ⭐ AND THE PIPE IS NOT OPTIONAL. `openkal.process' makes a channel out of a
+// pipe here, so a C library above this implementation reaches `poll' and
+// `select' upon one --- and a `select' that reported `kal_err_not_supported'
+// for a pipe would make every program that waits on a subprocess's output stop.
+// Measured: openkal-musl's own network probe, on the row that builds for this
+// system, reported `select reports the read end ready (errno=38)'.
+//
+// ⚠️ A SOCKET ALSO REPORTS `FILE_TYPE_PIPE', so the socket enquiry is made
+// FIRST and the file type only decides what a non-socket is.
+//
+// ⇒ What remains unbounded is a character device --- a console --- and
+// `kal_err_not_supported' is what this interface states for a resource an
+// implementation does not cover: "AN IMPLEMENTATION MAY PROVIDE THIS FOR SOME
+// OF ITS RESOURCES AND NOT OTHERS, and reports kal_err_not_supported for the
+// rest. That is not the defect clause 6.4 describes."
 
 namespace {
 
@@ -42,10 +50,10 @@ int bound_ms(kal_u64 ns) {
     return static_cast<int>(ms);
 }
 
-// Whether this word names a socket, which is the question the note above makes
-// unavoidable. `getsockname' is the enquiry that answers it: upon a socket it
-// succeeds or fails for a reason of its own, and upon anything else this system
-// reports `WSAENOTSOCK'.
+// Whether this word names a socket, which is the first question because a
+// socket also reports `FILE_TYPE_PIPE'. `getsockname' is the enquiry that
+// answers it: upon a socket it succeeds or fails for a reason of its own, and
+// upon anything else this system reports `WSAENOTSOCK'.
 bool is_socket(SOCKET s) {
     auto* n = okw::net_or_null();
     if (n == nullptr) return false;
@@ -53,6 +61,17 @@ bool is_socket(SOCKET s) {
     int len = static_cast<int>(sizeof ss);
     if (n->sockname(s, &ss, &len) == 0) return true;
     return n->last_error() != okw::WSAENOTSOCK;
+}
+
+enum class shape { socket, pipe, ready, none };
+
+shape shape_of(SOCKET raw) {
+    if (is_socket(raw)) return shape::socket;
+    switch (GetFileType(reinterpret_cast<HANDLE>(raw))) {
+        case FILE_TYPE_PIPE: return shape::pipe;
+        case FILE_TYPE_DISK: return shape::ready;   // a read from a file does not wait
+        default:             return shape::none;    // a console, or nothing at all
+    }
 }
 
 // Waits for one socket. Reports kal_ok when it is ready, kal_err_again when the
@@ -69,9 +88,39 @@ int await(SOCKET s, short events, kal_u64 ns) {
     return kal_ok;
 }
 
+// Waits for a pipe to have bytes, without taking them.
+//
+// ⭐ `PeekNamedPipe' IS THE ONE NON-DESTRUCTIVE READINESS ENQUIRY IN THIS WHOLE
+// ECOSYSTEM, and it is why this implementation needs no read-ahead where the
+// port above it does. It reports how many bytes are there and takes none.
+//
+// ⚠️ A CLOSED WRITING END IS READY AND NOT AN ERROR. The call then fails with
+// `ERROR_BROKEN_PIPE', and a read that follows reports the end of input without
+// waiting --- which is what readiness asserts. Reporting the failure here would
+// make a program that reads until end-of-input wait for ever instead.
+int await_pipe(HANDLE h, kal_u64 ns) {
+    const int ms = bound_ms(ns);
+    kal_u64 waited = 0;
+    for (;;) {
+        DWORD available = 0;
+        if (!PeekNamedPipe(h, nullptr, 0, nullptr, &available, nullptr)) {
+            const DWORD e = GetLastError();
+            if (e == ERROR_BROKEN_PIPE || e == ERROR_PIPE_NOT_CONNECTED) return kal_ok;
+            return okw::translate_win32(e);
+        }
+        if (available > 0) return kal_ok;
+        if (ms == 0) return kal_err_again;
+        if (ms > 0 && waited >= static_cast<kal_u64>(ms)) return kal_err_again;
+        // The interval this interface reports as its granularity, so the cost of
+        // the loop is the number already stated rather than a second one.
+        Sleep(1);
+        waited += 1;
+    }
+}
+
 int await_stream(kal_stream s, short events, kal_u64 ns) {
     // ⚠️ ONE REASON TO REFUSE, AND NOT TWO. An earlier form answered a null or
-    // invalid handle with `kal_err_invalid' and a valid non-socket with
+    // invalid handle with `kal_err_invalid' and everything else with
     // `kal_err_not_supported', and the conformance suite reported both bounded
     // reads of the standard input as not holding: a run whose standard input is
     // not attached has a handle of zero, and the suite's list of admissible
@@ -80,13 +129,21 @@ int await_stream(kal_stream s, short events, kal_u64 ns) {
     // ⭐ The early return was answering a DIFFERENT QUESTION. "Is this handle
     // valid" is what the unbounded operation answers; what this interface
     // answers is whether this implementation can bound an operation upon this
-    // resource, and the header sanctions exactly one refusal for that: "AN
-    // IMPLEMENTATION MAY PROVIDE THIS FOR SOME OF ITS RESOURCES AND NOT OTHERS,
-    // and reports kal_err_not_supported for the rest." A handle that is not a
-    // socket is one of the rest, and zero is not a socket.
+    // resource.
     const SOCKET raw = static_cast<SOCKET>(s.h);
-    if (!is_socket(raw)) return kal_err_not_supported;
-    return await(raw, events, ns);
+    switch (shape_of(raw)) {
+        case shape::socket: return await(raw, events, ns);
+        case shape::pipe:
+            // Writability is not enquired of: this system has no call that
+            // reports whether a pipe would accept bytes without blocking, and a
+            // write to one completes or reports. openkal-musl's okm_poll.c
+            // records the same answer for the same reason.
+            if (events == POLLWRNORM_) return kal_ok;
+            return await_pipe(reinterpret_cast<HANDLE>(raw), ns);
+        case shape::ready:  return kal_ok;
+        case shape::none:   return kal_err_not_supported;
+    }
+    return kal_err_not_supported;
 }
 
 }  // namespace

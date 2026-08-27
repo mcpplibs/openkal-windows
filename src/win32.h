@@ -190,6 +190,8 @@ enum : DWORD {
     FILE_NAME_NORMALIZED       = 0x0,
     VOLUME_NAME_DOS            = 0x0,
     FILE_TYPE_DISK             = 0x0001,
+    FILE_TYPE_CHAR             = 0x0002,
+    FILE_TYPE_PIPE             = 0x0003,
 
     HANDLE_FLAG_INHERIT   = 0x1,
     STARTF_USESTDHANDLES  = 0x00000100u,
@@ -255,6 +257,10 @@ OKW_IMPORT BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
 // For kal_process_channel. The security attributes decide whether the ends are
 // inheritable, which is what makes one of them able to cross a spawn.
 OKW_IMPORT BOOL   OKW_API CreatePipe(HANDLE*, HANDLE*, SECURITY_ATTRIBUTES*, DWORD);
+// How many bytes a pipe has without taking them, which is the one readiness
+// enquiry on this system that is not `WSAPoll'. src/timeout.cpp says why both
+// are needed.
+OKW_IMPORT BOOL   OKW_API PeekNamedPipe(HANDLE, LPVOID, DWORD, DWORD*, DWORD*, DWORD*);
 OKW_IMPORT BOOL   OKW_API GetConsoleMode(HANDLE, DWORD*);
 OKW_IMPORT BOOL   OKW_API SetConsoleMode(HANDLE, DWORD);
 
