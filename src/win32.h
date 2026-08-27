@@ -244,6 +244,9 @@ OKW_IMPORT BOOL   OKW_API CloseHandle(HANDLE);
 OKW_IMPORT DWORD  OKW_API GetLastError(void);
 OKW_IMPORT DWORD  OKW_API GetFileType(HANDLE);
 OKW_IMPORT BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
+// For kal_process_channel. The security attributes decide whether the ends are
+// inheritable, which is what makes one of them able to cross a spawn.
+OKW_IMPORT BOOL   OKW_API CreatePipe(HANDLE*, HANDLE*, SECURITY_ATTRIBUTES*, DWORD);
 OKW_IMPORT BOOL   OKW_API GetConsoleMode(HANDLE, DWORD*);
 OKW_IMPORT BOOL   OKW_API SetConsoleMode(HANDLE, DWORD);
 

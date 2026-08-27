@@ -177,6 +177,81 @@ int kal_process_spawn(kal_dir base,
     return kal_ok;
 }
 
+// A channel: a pair of streams of which one end is meant to cross a spawn.
+//
+// THIS ENVIRONMENT DECIDES INHERITANCE PER HANDLE AND NOT PER EXEC, which is the
+// opposite of the other two and is why the far end is created inheritable while
+// the near end is not. On a descriptor system every handle is inherited unless
+// marked otherwise, so those implementations mark the ends close-on-exec and let
+// the spawn place the far one deliberately. Here the default is not to inherit,
+// so the far end must be marked to be inheritable and the near end must be left
+// alone --- otherwise the started program would hold both ends and the writer
+// would never observe the end of input.
+int kal_process_channel(kal_stream* mine, kal_stream* theirs) {
+    if (mine == nullptr || theirs == nullptr) return kal_err_invalid;
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof sa;
+    sa.bInheritHandle = TRUE;
+
+    HANDLE reading = nullptr, writing = nullptr;
+    if (!CreatePipe(&reading, &writing, &sa, 0))
+        return okw::translate_win32(GetLastError());
+
+    // The near end is withdrawn from inheritance after the fact, because
+    // CreatePipe applies one set of attributes to both.
+    SetHandleInformation(reading, HANDLE_FLAG_INHERIT, 0);
+
+    // Bare handles rather than packed ones, because openkal.stream's transfer
+    // operations take what this environment takes. kal_fs_stream reports a
+    // file's stream the same way and for the same reason.
+    *mine   = kal_stream{ reinterpret_cast<kal_uintptr>(reading) };
+    *theirs = kal_stream{ reinterpret_cast<kal_uintptr>(writing) };
+    return kal_ok;
+}
+
+void kal_process_channel_close(kal_stream s) {
+    void* h = reinterpret_cast<void*>(s.h);
+    if (h == nullptr || h == INVALID_HANDLE_VALUE) return;
+    // The standard streams are borrowed. Closing one through this operation
+    // would take a stream away from the whole program.
+    if (h == GetStdHandle(STD_INPUT_HANDLE)  ||
+        h == GetStdHandle(STD_OUTPUT_HANDLE) ||
+        h == GetStdHandle(STD_ERROR_HANDLE)) return;
+    CloseHandle(h);
+}
+
+// Starting a program that receives exactly the directories named.
+//
+// ⚠️ NOT PROVIDED, AND THE REFUSAL IS THE HONEST ANSWER RATHER THAN A GAP. A
+// preopened directory is a handle a started program reads back through
+// kal_fs_preopen by NUMBER, and this environment has no numbering: a handle
+// crosses a spawn by being inheritable, and the started program learns of it
+// through a mechanism the parent has to arrange itself. There is no
+// correspondence here to descriptor three.
+//
+// Clause 6.2 is what makes the refusal conforming rather than a deviation: the
+// operation exists, reports kal_err_not_supported, and the property word does
+// not claim KAL_PROCESS_PROP_GRANT_DIR. A caller therefore learns from the word
+// what it would otherwise learn from a failed call.
+int kal_process_spawn_with(kal_dir base,
+                           const char* path, kal_uintptr path_len,
+                           const char** argv, const kal_uintptr* argv_lens, kal_uintptr argc,
+                           const char** envp, const kal_uintptr* envp_lens, kal_uintptr envc,
+                           const kal_spawn_streams* streams,
+                           const kal_preopen* grants, kal_uintptr grant_count,
+                           kal_process* out) {
+    // A count of zero asks for a program with no preopens, which this
+    // environment gives a started program anyway --- it has none to pass. That
+    // request is therefore answerable, and is answered by the ordinary spawn.
+    if (grant_count == 0)
+        return kal_process_spawn(base, path, path_len,
+                                 argv, argv_lens, argc,
+                                 envp, envp_lens, envc, streams, out);
+    (void)grants;
+    return kal_err_not_supported;
+}
+
 int kal_process_wait(kal_process p, int* status, int* terminated) {
     void* h = okw::unpack(p.h);
     if (!h) return kal_err_invalid;
@@ -212,8 +287,12 @@ void kal_process_close(kal_process p) {
     if (h) { okw::retire(p.h); CloseHandle(h); }
 }
 
+// KAL_PROCESS_PROP_GRANT_DIR is deliberately absent: kal_process_spawn_with
+// refuses a non-empty set of grants here, and a word claiming a facility the
+// next call refuses is the disagreement clause 6.2 exists to prevent.
 const kal_uintptr kal_process_props =
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
-  | KAL_PROCESS_PROP_EXIT_STATUS;
+  | KAL_PROCESS_PROP_EXIT_STATUS
+  | KAL_PROCESS_PROP_CHANNEL;
 
 }
