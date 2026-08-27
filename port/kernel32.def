@@ -10,6 +10,7 @@ CreatePipe
 CreateProcessW
 CreateThread
 FlushFileBuffers
+FlushInstructionCache
 FreeEnvironmentStringsW
 GetCommandLineW
 GetConsoleMode
@@ -41,6 +42,9 @@ SetHandleInformation
 Sleep
 SwitchToThread
 TerminateProcess
+VirtualAlloc
+VirtualFree
+VirtualProtect
 WaitForSingleObject
 WideCharToMultiByte
 WriteFile

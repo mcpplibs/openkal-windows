@@ -70,8 +70,21 @@ int await(SOCKET s, short events, kal_u64 ns) {
 }
 
 int await_stream(kal_stream s, short events, kal_u64 ns) {
+    // ⚠️ ONE REASON TO REFUSE, AND NOT TWO. An earlier form answered a null or
+    // invalid handle with `kal_err_invalid' and a valid non-socket with
+    // `kal_err_not_supported', and the conformance suite reported both bounded
+    // reads of the standard input as not holding: a run whose standard input is
+    // not attached has a handle of zero, and the suite's list of admissible
+    // answers is the interface's --- success, an expiry, or a refusal.
+    //
+    // ⭐ The early return was answering a DIFFERENT QUESTION. "Is this handle
+    // valid" is what the unbounded operation answers; what this interface
+    // answers is whether this implementation can bound an operation upon this
+    // resource, and the header sanctions exactly one refusal for that: "AN
+    // IMPLEMENTATION MAY PROVIDE THIS FOR SOME OF ITS RESOURCES AND NOT OTHERS,
+    // and reports kal_err_not_supported for the rest." A handle that is not a
+    // socket is one of the rest, and zero is not a socket.
     const SOCKET raw = static_cast<SOCKET>(s.h);
-    if (raw == 0 || raw == INVALID_SOCKET) return kal_err_invalid;
     if (!is_socket(raw)) return kal_err_not_supported;
     return await(raw, events, ns);
 }
