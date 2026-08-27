@@ -51,16 +51,22 @@ int bound_ms(kal_u64 ns) {
 }
 
 // Whether this word names a socket, which is the first question because a
-// socket also reports `FILE_TYPE_PIPE'. `getsockname' is the enquiry that
-// answers it: upon a socket it succeeds or fails for a reason of its own, and
-// upon anything else this system reports `WSAENOTSOCK'.
+// socket also reports `FILE_TYPE_PIPE'.
+//
+// ⚠️ THE TEST IS THAT `getsockname' SUCCEEDS, AND NOT THAT IT FAILED FOR SOME
+// PARTICULAR REASON. The first form of this function read "it is a socket
+// unless the failure was WSAENOTSOCK", which makes the answer depend on which
+// error a system chooses for a handle that is not one --- and Wine does not
+// choose the same one. Every socket this implementation hands out has been
+// connected, bound or accepted, so `getsockname' succeeds upon all of them;
+// anything it cannot answer for is treated as not a socket, and the file type
+// then decides.
 bool is_socket(SOCKET s) {
     auto* n = okw::net_or_null();
     if (n == nullptr) return false;
     ksockaddr_storage ss{};
     int len = static_cast<int>(sizeof ss);
-    if (n->sockname(s, &ss, &len) == 0) return true;
-    return n->last_error() != okw::WSAENOTSOCK;
+    return n->sockname(s, &ss, &len) == 0;
 }
 
 enum class shape { socket, pipe, ready, none };
@@ -81,6 +87,13 @@ int await(SOCKET s, short events, kal_u64 ns) {
     if (n == nullptr) return kal_err_not_supported;
     WSAPOLLFD_ p{ s, events, 0 };
     const int r = n->poll(&p, 1, bound_ms(ns));
+    // ⭐ THE REAL ERROR IS KEPT HERE AND NARROWED IN `await_stream'. This
+    // function is reached with a socket this implementation made --- from
+    // `kal_timeout_accept' and `kal_timeout_recv_from', where the resource is
+    // known --- so a failure carries information a caller can act upon. It is
+    // reached with a caller's stream through `await_stream', where the resource
+    // is not known, and that is where the answer is narrowed to the set the
+    // interface defines.
     if (r < 0) return okw::last_socket_error();
     if (r == 0) return kal_err_again;   // the bound expired
     // A socket reported as failed or hung up is ready in the sense that the
@@ -106,7 +119,12 @@ int await_pipe(HANDLE h, kal_u64 ns) {
         if (!PeekNamedPipe(h, nullptr, 0, nullptr, &available, nullptr)) {
             const DWORD e = GetLastError();
             if (e == ERROR_BROKEN_PIPE || e == ERROR_PIPE_NOT_CONNECTED) return kal_ok;
-            return okw::translate_win32(e);
+            // ⚠️ A FAILURE OF THE ENQUIRY IS NOT AN ERROR OF THE TRANSFER, and
+            // reporting it as one would put this operation's answer outside the
+            // set the interface defines for it. What this call could not do is
+            // BOUND the operation; the transfer that follows reports whatever
+            // is wrong with the resource, in the words it already uses.
+            return kal_err_not_supported;
         }
         if (available > 0) return kal_ok;
         if (ms == 0) return kal_err_again;
@@ -118,6 +136,20 @@ int await_pipe(HANDLE h, kal_u64 ns) {
     }
 }
 
+// ⭐⭐ EVERY PATH OUT OF THIS FUNCTION IS ONE OF THREE: kal_ok, kal_err_again,
+// kal_err_not_supported.
+//
+// That is the set `openkal.timeout' defines for the WAIT it adds, and keeping
+// to it is what makes a bounded operation distinguishable from an ordinary one.
+// An error belonging to the RESOURCE --- an invalid handle, a reset connection
+// --- is the transfer's to report, and the transfer follows this call.
+//
+// ⚠️ MEASURED TWICE, BOTH TIMES AS THE SAME SHAPE. An earlier form returned
+// `kal_err_invalid' for a handle of zero; a later one returned whatever
+// `PeekNamedPipe' or `WSAPoll' had failed with. The conformance suite reported
+// both as "a bounded read reports success, an expiry, or a refusal" not
+// holding, and the second time only under Wine --- which is to say, only where
+// the system chose a different error for the same condition.
 int await_stream(kal_stream s, short events, kal_u64 ns) {
     // ⚠️ ONE REASON TO REFUSE, AND NOT TWO. An earlier form answered a null or
     // invalid handle with `kal_err_invalid' and everything else with
@@ -132,7 +164,11 @@ int await_stream(kal_stream s, short events, kal_u64 ns) {
     // resource.
     const SOCKET raw = static_cast<SOCKET>(s.h);
     switch (shape_of(raw)) {
-        case shape::socket: return await(raw, events, ns);
+        case shape::socket: {
+            const int r = await(raw, events, ns);
+            // Narrowed here and not in `await': see the note there.
+            return (r == kal_ok || r == kal_err_again) ? r : kal_err_not_supported;
+        }
         case shape::pipe:
             // Writability is not enquired of: this system has no call that
             // reports whether a pipe would accept bytes without blocking, and a
