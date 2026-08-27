@@ -26,17 +26,21 @@ SOCKET socket_of(kal_net_listener l) { return okw::unpack_socket(l.h); }
 
 bool bad(SOCKET s) { return s == INVALID_SOCKET; }
 
+okw::network_calls* net() { return okw::net_or_null(); }
+
 SOCKET make(int family, int type, int protocol) {
-    okw::ensure_network();
-    return WSASocketW(family, type, protocol, nullptr, 0, 0);
+    auto* n = net();
+    return n ? n->socket(family, type, protocol, nullptr, 0, 0) : INVALID_SOCKET;
 }
 
 int report_address(bool peer, SOCKET s, kal_endpoint* out) {
     if (out == nullptr) return kal_err_invalid;
     if (bad(s)) return kal_err_invalid;
+    auto* n = net();
+    if (n == nullptr) return kal_err_io;
     ksockaddr_storage ss{};
     int len = static_cast<int>(sizeof ss);
-    const int r = peer ? getpeername(s, &ss, &len) : getsockname(s, &ss, &len);
+    const int r = peer ? n->peername(s, &ss, &len) : n->sockname(s, &ss, &len);
     if (r != 0) return okw::last_socket_error();
     return okw::from_system(ss, *out);
 }
@@ -54,17 +58,19 @@ int kal_net_connect(const kal_endpoint* to, kal_net_conn* out) {
     int len = 0;
     if (const int rc = okw::to_system(*to, ss, len); rc != kal_ok) return rc;
 
+    auto* n = net();
+    if (n == nullptr) return kal_err_io;
     const SOCKET s = make(family, SOCK_STREAM_, IPPROTO_TCP_);
     if (bad(s)) return okw::last_socket_error();
 
-    if (connect(s, &ss, len) != 0) {
+    if (n->connect(s, &ss, len) != 0) {
         const int e = okw::last_socket_error();
-        closesocket(s);
+        n->close(s);
         return e;
     }
 
     out->h = okw::pack_socket(s);
-    if (out->h == 0) { closesocket(s); return kal_err_no_memory; }
+    if (out->h == 0) { n->close(s); return kal_err_no_memory; }
     return kal_ok;
 }
 
@@ -77,6 +83,8 @@ int kal_net_listen(const kal_endpoint* local, kal_net_listener* out) {
     int len = 0;
     if (const int rc = okw::to_system(*local, ss, len); rc != kal_ok) return rc;
 
+    auto* n = net();
+    if (n == nullptr) return kal_err_io;
     const SOCKET s = make(family, SOCK_STREAM_, IPPROTO_TCP_);
     if (bad(s)) return okw::last_socket_error();
 
@@ -94,22 +102,22 @@ int kal_net_listen(const kal_endpoint* local, kal_net_listener* out) {
     // implementations behave alike; it would make this one behave differently
     // from the other two while looking the same.
 
-    if (bind(s, &ss, len) != 0) {
+    if (n->bind(s, &ss, len) != 0) {
         const int e = okw::last_socket_error();
-        closesocket(s);
+        n->close(s);
         return e;
     }
 
     // The backlog the system is asked for. A number rather than a name, because
     // this interface does not expose one and a caller has no way to state it.
-    if (listen(s, 128) != 0) {
+    if (n->listen(s, 128) != 0) {
         const int e = okw::last_socket_error();
-        closesocket(s);
+        n->close(s);
         return e;
     }
 
     out->h = okw::pack_socket(s);
-    if (out->h == 0) { closesocket(s); return kal_err_no_memory; }
+    if (out->h == 0) { n->close(s); return kal_err_no_memory; }
     return kal_ok;
 }
 
@@ -117,15 +125,17 @@ int kal_net_accept(kal_net_listener l, kal_net_conn* out) {
     if (out == nullptr) return kal_err_invalid;
     const SOCKET s = socket_of(l);
     if (bad(s)) return kal_err_invalid;
+    auto* n = net();
+    if (n == nullptr) return kal_err_io;
 
-    const SOCKET c = accept(s, nullptr, nullptr);
+    const SOCKET c = n->accept(s, nullptr, nullptr);
     if (bad(c)) return okw::last_socket_error();
 
     // ⚠️ A CONNECTION INHERITS THE LISTENER'S PROPERTIES AND NOT ITS FLAGS WORD.
     // The listener was made non-overlapped; an accepted connection is
     // non-overlapped too, which is what keeps `ReadFile' synchronous upon it.
     out->h = okw::pack_socket(c);
-    if (out->h == 0) { closesocket(c); return kal_err_no_memory; }
+    if (out->h == 0) { n->close(c); return kal_err_no_memory; }
     return kal_ok;
 }
 
@@ -165,21 +175,23 @@ int kal_net_shutdown(kal_net_conn c, int direction) {
         default: return kal_err_invalid;
     }
 
-    if (shutdown(s, how) != 0) return okw::last_socket_error();
+    auto* n = net();
+    if (n == nullptr) return kal_err_io;
+    if (n->shutdown(s, how) != 0) return okw::last_socket_error();
     return kal_ok;
 }
 
 void kal_net_close(kal_net_conn c) {
     const SOCKET s = socket_of(c);
     if (bad(s)) return;
-    closesocket(s);
+    if (auto* n = net()) n->close(s);
     okw::retire(c.h);
 }
 
 void kal_net_close_listener(kal_net_listener l) {
     const SOCKET s = socket_of(l);
     if (bad(s)) return;
-    closesocket(s);
+    if (auto* n = net()) n->close(s);
     okw::retire(l.h);
 }
 

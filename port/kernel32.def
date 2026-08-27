@@ -23,11 +23,13 @@ GetFileType
 GetFinalPathNameByHandleW
 GetLastError
 GetLogicalDriveStringsW
+GetProcAddress
 GetProcessHeap
 GetStdHandle
 GetSystemTimePreciseAsFileTime
 HeapAlloc
 HeapFree
+LoadLibraryW
 LocalFree
 MultiByteToWideChar
 QueryPerformanceCounter

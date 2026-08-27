@@ -14,6 +14,8 @@ namespace {
 
 SOCKET socket_of(kal_datagram d) { return okw::unpack_socket(d.h); }
 
+okw::network_calls* net() { return okw::net_or_null(); }
+
 bool bad(SOCKET s) { return s == INVALID_SOCKET; }
 
 // The largest transfer one call accepts. This system states a count as an
@@ -38,26 +40,27 @@ int kal_datagram_open(const kal_endpoint* local, kal_datagram* out) {
         if (family < 0) return kal_err_invalid;
     }
 
-    okw::ensure_network();
-    const SOCKET s = WSASocketW(family, SOCK_DGRAM_, IPPROTO_UDP_, nullptr, 0, 0);
+    auto* n = net();
+    if (n == nullptr) return kal_err_io;
+    const SOCKET s = n->socket(family, SOCK_DGRAM_, IPPROTO_UDP_, nullptr, 0, 0);
     if (bad(s)) return okw::last_socket_error();
 
     if (local != nullptr) {
         ksockaddr_storage ss{};
         int len = 0;
         if (const int rc = okw::to_system(*local, ss, len); rc != kal_ok) {
-            closesocket(s);
+            n->close(s);
             return rc;
         }
-        if (bind(s, &ss, len) != 0) {
+        if (n->bind(s, &ss, len) != 0) {
             const int e = okw::last_socket_error();
-            closesocket(s);
+            n->close(s);
             return e;
         }
     }
 
     out->h = okw::pack_socket(s);
-    if (out->h == 0) { closesocket(s); return kal_err_no_memory; }
+    if (out->h == 0) { n->close(s); return kal_err_no_memory; }
     return kal_ok;
 }
 
@@ -66,9 +69,11 @@ int kal_datagram_local(kal_datagram d, kal_endpoint* out) {
     const SOCKET s = socket_of(d);
     if (bad(s)) return kal_err_invalid;
 
+    auto* n = net();
+    if (n == nullptr) return kal_err_io;
     ksockaddr_storage ss{};
     int len = static_cast<int>(sizeof ss);
-    if (getsockname(s, &ss, &len) != 0) return okw::last_socket_error();
+    if (n->sockname(s, &ss, &len) != 0) return okw::last_socket_error();
     return okw::from_system(ss, *out);
 }
 
@@ -78,13 +83,15 @@ kal_io_result kal_datagram_send_to(kal_datagram d, const void* buf, kal_uintptr 
     if (bad(s) || to == nullptr) return { 0, kal_err_invalid };
     if (len > kMaxOne) return { 0, kal_err_invalid };
 
+    auto* n = net();
+    if (n == nullptr) return { 0, kal_err_io };
     ksockaddr_storage ss{};
     int addrlen = 0;
     if (const int rc = okw::to_system(*to, ss, addrlen); rc != kal_ok)
         return { 0, rc };
 
-    const int r = sendto(s, static_cast<const char*>(buf), static_cast<int>(len),
-                         0, &ss, addrlen);
+    const int r = n->send_to(s, static_cast<const char*>(buf), static_cast<int>(len),
+                             0, &ss, addrlen);
     if (r < 0) return { 0, okw::last_socket_error() };
 
     // A MESSAGE IS SENT WHOLE OR NOT AT ALL, which is what this interface
@@ -93,8 +100,8 @@ kal_io_result kal_datagram_send_to(kal_datagram d, const void* buf, kal_uintptr 
     // it does not do. Reporting the short count as success would give a caller a
     // partial send this interface says cannot occur, so it is reported as a
     // failure of the medium instead.
-    const kal_uintptr n = static_cast<kal_uintptr>(r);
-    return { n, n == len ? kal_ok : kal_err_io };
+    const kal_uintptr sent = static_cast<kal_uintptr>(r);
+    return { sent, sent == len ? kal_ok : kal_err_io };
 }
 
 kal_io_result kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
@@ -103,11 +110,13 @@ kal_io_result kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
     if (bad(s)) return { 0, kal_err_invalid };
     if (len > kMaxOne) len = kMaxOne;
 
+    auto* n = net();
+    if (n == nullptr) return { 0, kal_err_io };
     ksockaddr_storage ss{};
     int addrlen = static_cast<int>(sizeof ss);
 
-    const int r = recvfrom(s, static_cast<char*>(buf), static_cast<int>(len),
-                           0, &ss, &addrlen);
+    const int r = n->recv_from(s, static_cast<char*>(buf), static_cast<int>(len),
+                               0, &ss, &addrlen);
     if (r < 0) {
         // ⚠️ THE ONE FAILURE THIS SYSTEM REPORTS THAT THE OTHER TWO DO NOT.
         //
@@ -122,7 +131,7 @@ kal_io_result kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
         //
         // The count is not recoverable from this call, so what is reported is
         // the whole of the buffer, which is what was filled.
-        if (WSAGetLastError() == okw::WSAEMSGSIZE) {
+        if (n->last_error() == okw::WSAEMSGSIZE) {
             if (from != nullptr && okw::from_system(ss, *from) != kal_ok) {
                 for (auto& b : from->addr) b = 0;
                 from->addr_len = 0;
@@ -149,7 +158,7 @@ kal_io_result kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
 void kal_datagram_close(kal_datagram d) {
     const SOCKET s = socket_of(d);
     if (bad(s)) return;
-    closesocket(s);
+    if (auto* n = net()) n->close(s);
     okw::retire(d.h);
 }
 

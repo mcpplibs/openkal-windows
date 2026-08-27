@@ -333,6 +333,11 @@ OKW_IMPORT BOOL   OKW_API FlushInstructionCache(HANDLE, LPCVOID, unsigned long l
 // From shell32, and the only name this package takes from it.
 OKW_IMPORT LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
 
+// Reaching a library by name at run time, which is how this implementation
+// obtains the network interface. src/endpoint.h says why it is not linked.
+OKW_IMPORT HANDLE OKW_API LoadLibraryW(LPCWSTR);
+OKW_IMPORT void*  OKW_API GetProcAddress(HANDLE, LPCSTR);
+
 // ── ntdll ───────────────────────────────────────────────────────────────────
 //
 // The object-manager entry points. Their STRUCTURES are declared in win.h and
@@ -344,12 +349,28 @@ OKW_IMPORT DWORD OKW_API RtlNtStatusToDosError(long);
 
 // ── ws2_32: this system's network interface ─────────────────────────────────
 //
-// ⚠️⚠️ THIS IS THE ONE PART OF THE SYSTEM WHOSE ERROR VALUES ARE NOT THE ONES
-// EVERYTHING ELSE HERE REPORTS. `GetLastError' answers for the calls above and
-// `WSAGetLastError' for these, and the two numbering schemes do not overlap ---
-// a network failure is ten thousand and something. src/endpoint.h carries the
-// second mapping for that reason; using `translate_win32' on a socket error
-// would produce `kal_err_io' for every one of them.
+// ⚠️⚠️ NOT DECLARED AS IMPORTS AND NOT LINKED, AND THE REASON IS A COLLISION
+// RATHER THAN A PREFERENCE.
+//
+// This library's names ARE the BSD names --- `bind', `listen', `accept',
+// `connect'. So does the C library above this implementation: openkal-musl
+// compiles musl's own `src/network/*.c', which define those names and route
+// them through this port. Naming `-lws2_32' on the link line puts BOTH
+// definitions in one program:
+//
+//     ld.exe: libws2_32.a(libws2_32s00165.o): multiple definition of `connect';
+//             musl/src/network/connect.o: first defined here
+//
+// Measured on the first run of this change, on the GNU/PE row of the C
+// library's own continuous integration. It is not an ordering problem: an
+// import library's member defines the thunk AND the `__imp_' pointer together,
+// so reaching for either brings both.
+//
+// ⭐ THE NAMES ARE THEREFORE REACHED AT RUN TIME, THROUGH THE LIBRARY'S OWN
+// LOADER. Nothing of ws2_32 enters this program's symbol table, so the C
+// library above keeps its `bind' and this implementation still reaches the
+// system's. `ws2_32.dll' is a core component of every installation of this
+// system, and src/endpoint.h states what happens if it is somehow absent.
 //
 // ⚠️ AND THREE CONSTANTS DIFFER FROM THE OTHER SYSTEMS' WITHOUT ANNOUNCING IT:
 // `AF_INET6' is 23 here, 30 on macOS and 10 on Linux; `SOL_SOCKET' is 0xffff
@@ -365,13 +386,10 @@ using SOCKET = unsigned long long;
 
 inline const SOCKET INVALID_SOCKET = static_cast<SOCKET>(-1);
 
-enum : int { SOCKET_ERROR_ = -1 };
-
 enum : int {
     AF_INET_ = 2, AF_INET6_ = 23,
     SOCK_STREAM_ = 1, SOCK_DGRAM_ = 2,
     IPPROTO_TCP_ = 6, IPPROTO_UDP_ = 17,
-    SOL_SOCKET_ = 0xffff, SO_REUSEADDR_ = 0x0004,
     SD_RECEIVE_ = 0, SD_SEND_ = 1, SD_BOTH_ = 2,
 };
 
@@ -405,33 +423,21 @@ struct ksockaddr_in6 {
 
 struct ksockaddr_storage { unsigned char pad[128]; };
 
-extern "C" {
-
-// ⚠️ THE STARTUP RECORD IS OPAQUE AND LARGER THAN THE DOCUMENTED LAYOUT, WHICH
-// IS THE OPPOSITE OF THE RULE THIS FILE FOLLOWS FOR EVERY OTHER STRUCTURE.
-// The rule is there because a structure this package FILLS IN and the system
-// reads must have the documented shape. This one the system fills in and this
-// package never reads: nothing here needs a member of it, so a buffer larger
-// than the record cannot be the wrong shape.
-OKW_IMPORT int    OKW_API WSAStartup(WORD, void*);
-OKW_IMPORT int    OKW_API WSAGetLastError(void);
-
-// `WSASocketW' rather than `socket', and the last argument is why. `socket'
-// makes an overlapped handle; a flags word of zero does not, and a
-// non-overlapped socket is one `ReadFile' and `WriteFile' transfer through
-// synchronously --- which is what openkal.stream's operations use here and is
-// what makes a connection a stream on this system without a second code path.
-OKW_IMPORT SOCKET OKW_API WSASocketW(int, int, int, void*, unsigned, DWORD);
-OKW_IMPORT int    OKW_API closesocket(SOCKET);
-OKW_IMPORT int    OKW_API bind(SOCKET, const void*, int);
-OKW_IMPORT int    OKW_API listen(SOCKET, int);
-OKW_IMPORT SOCKET OKW_API accept(SOCKET, void*, int*);
-OKW_IMPORT int    OKW_API connect(SOCKET, const void*, int);
-OKW_IMPORT int    OKW_API shutdown(SOCKET, int);
-OKW_IMPORT int    OKW_API getsockname(SOCKET, void*, int*);
-OKW_IMPORT int    OKW_API getpeername(SOCKET, void*, int*);
-OKW_IMPORT int    OKW_API sendto(SOCKET, const char*, int, int, const void*, int);
-OKW_IMPORT int    OKW_API recvfrom(SOCKET, char*, int, int, void*, int*);
-OKW_IMPORT int    OKW_API WSAPoll(WSAPOLLFD_*, ULONG, int);
-
-}  // extern "C"
+// The shapes of the calls, so that a pointer obtained at run time is still
+// type-checked. ⚠️ THE LAYOUT RULE OF THIS FILE APPLIES HERE TOO: a signature
+// that is wrong does not fail to compile, because nothing checks it against the
+// system --- it produces a call with the wrong arguments in the wrong places.
+using pfn_WSAStartup      = int    (OKW_API*)(WORD, void*);
+using pfn_WSAGetLastError = int    (OKW_API*)(void);
+using pfn_WSASocketW      = SOCKET (OKW_API*)(int, int, int, void*, unsigned, DWORD);
+using pfn_closesocket     = int    (OKW_API*)(SOCKET);
+using pfn_bind            = int    (OKW_API*)(SOCKET, const void*, int);
+using pfn_listen          = int    (OKW_API*)(SOCKET, int);
+using pfn_accept          = SOCKET (OKW_API*)(SOCKET, void*, int*);
+using pfn_connect         = int    (OKW_API*)(SOCKET, const void*, int);
+using pfn_shutdown        = int    (OKW_API*)(SOCKET, int);
+using pfn_getsockname     = int    (OKW_API*)(SOCKET, void*, int*);
+using pfn_getpeername     = int    (OKW_API*)(SOCKET, void*, int*);
+using pfn_sendto          = int    (OKW_API*)(SOCKET, const char*, int, int, const void*, int);
+using pfn_recvfrom        = int    (OKW_API*)(SOCKET, char*, int, int, void*, int*);
+using pfn_WSAPoll         = int    (OKW_API*)(WSAPOLLFD_*, ULONG, int);

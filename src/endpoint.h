@@ -57,13 +57,18 @@ inline int translate_wsa(int e) {
     }
 }
 
-inline int last_socket_error() { return translate_wsa(WSAGetLastError()); }
-
-// ── starting this system's network interface ────────────────────────────────
+// ── reaching this system's network interface ────────────────────────────────
 //
-// ⚠️ IT HAS TO BE STARTED, AND THERE IS NO OTHER PLACE TO DO IT. Every socket
-// call fails with `WSANOTINITIALISED' until `WSAStartup' has been called in
-// this image, and openkal has no operation a program calls first.
+// ⚠️⚠️ RESOLVED AT RUN TIME RATHER THAN LINKED, AND src/win32.h RECORDS THE
+// MEASUREMENT: this library's names are the BSD names, the C library above this
+// implementation defines the same names, and an import library puts both
+// definitions in one program. Nothing of ws2_32 enters this program's symbol
+// table now.
+//
+// ⚠️ IT ALSO HAS TO BE STARTED. Every socket call fails with
+// `WSANOTINITIALISED' until `WSAStartup' has been called in this image, and
+// openkal has no operation a program calls first --- so the first operation
+// that needs the interface starts it.
 //
 // ⭐ NOT A FUNCTION-LOCAL STATIC WITH A RUNTIME INITIALISER, AND THE MANIFEST
 // SAYS WHY: every static in this package is initialised by a constant, so no
@@ -71,18 +76,96 @@ inline int last_socket_error() { return translate_wsa(WSAGetLastError()); }
 // to `__cxa_guard_acquire' --- a C runtime symbol, in the one package whose
 // continuous integration asserts it references none.
 //
-// ⚠️ THE FLAG IS READ AND WRITTEN WITHOUT SYNCHRONISATION, AND THAT IS SAFE
-// HERE RATHER THAN OVERLOOKED. Two contexts racing produce a second
-// `WSAStartup', which this system reference-counts and which is documented as
-// callable more than once. This implementation never calls `WSACleanup' --- the
-// interface stays started for the life of the image, which is what a program
-// that opened a socket wants --- so the count never reaches zero and the
-// duplicate costs nothing.
-inline void ensure_network() {
-    static int started = 0;
-    if (started) return;
+// ⚠️ THE TABLE IS READ AND WRITTEN WITHOUT SYNCHRONISATION, AND THAT IS SAFE
+// HERE RATHER THAN OVERLOOKED. Two contexts racing resolve the same pointers
+// from the same library to the same values and perform a second `WSAStartup',
+// which this system reference-counts and documents as callable more than once.
+// This implementation never calls `WSACleanup' --- the interface stays
+// available for the life of the image, which is what a program that opened a
+// socket wants --- so the count never reaches zero.
+struct network_calls {
+    int ready;                       // 0 not tried, 1 available, -1 absent
+    pfn_WSAGetLastError last_error;
+    pfn_WSASocketW      socket;
+    pfn_closesocket     close;
+    pfn_bind            bind;
+    pfn_listen          listen;
+    pfn_accept          accept;
+    pfn_connect         connect;
+    pfn_shutdown        shutdown;
+    pfn_getsockname     sockname;
+    pfn_getpeername     peername;
+    pfn_sendto          send_to;
+    pfn_recvfrom        recv_from;
+    pfn_WSAPoll         poll;
+};
+
+inline network_calls& net_calls() {
+    static network_calls c = {};    // constant-initialised: no guard is emitted
+    return c;
+}
+
+// ⚠️ THE LIBRARY'S NAME IS WRITTEN AS WIDE CHARACTERS BY HAND. This package has
+// no C library to take a literal converter from, and `L"ws2_32.dll"' is the
+// language's own; it is spelled out so that no header is needed for it.
+inline bool ensure_network() {
+    network_calls& c = net_calls();
+    if (c.ready != 0) return c.ready > 0;
+
+    static const wchar_t name[] = { L'w', L's', L'2', L'_', L'3', L'2', L'.',
+                                    L'd', L'l', L'l', L'\0' };
+    HANDLE lib = LoadLibraryW(name);
+    if (lib == nullptr) { c.ready = -1; return false; }
+
+    auto at = [lib](const char* n) { return GetProcAddress(lib, n); };
+    auto start = reinterpret_cast<pfn_WSAStartup>(at("WSAStartup"));
+    c.last_error = reinterpret_cast<pfn_WSAGetLastError>(at("WSAGetLastError"));
+    c.socket     = reinterpret_cast<pfn_WSASocketW>(at("WSASocketW"));
+    c.close      = reinterpret_cast<pfn_closesocket>(at("closesocket"));
+    c.bind       = reinterpret_cast<pfn_bind>(at("bind"));
+    c.listen     = reinterpret_cast<pfn_listen>(at("listen"));
+    c.accept     = reinterpret_cast<pfn_accept>(at("accept"));
+    c.connect    = reinterpret_cast<pfn_connect>(at("connect"));
+    c.shutdown   = reinterpret_cast<pfn_shutdown>(at("shutdown"));
+    c.sockname   = reinterpret_cast<pfn_getsockname>(at("getsockname"));
+    c.peername   = reinterpret_cast<pfn_getpeername>(at("getpeername"));
+    c.send_to    = reinterpret_cast<pfn_sendto>(at("sendto"));
+    c.recv_from  = reinterpret_cast<pfn_recvfrom>(at("recvfrom"));
+    c.poll       = reinterpret_cast<pfn_WSAPoll>(at("WSAPoll"));
+
+    // ⚠️ EVERY ONE OF THEM, OR NONE. A table with one null entry is worse than
+    // no table: the operations that resolved would work and the one that did
+    // not would call through zero, which is the failure clause 6.1 exists to
+    // turn into a link error and this arrangement cannot.
+    if (!start || !c.last_error || !c.socket || !c.close || !c.bind ||
+        !c.listen || !c.accept || !c.connect || !c.shutdown || !c.sockname ||
+        !c.peername || !c.send_to || !c.recv_from || !c.poll) {
+        c.ready = -1;
+        return false;
+    }
+
     unsigned char record[1024];   // larger than the documented layout; see win32.h
-    if (WSAStartup(0x0202 /* version 2.2 */, record) == 0) started = 1;
+    if (start(0x0202 /* version 2.2 */, record) != 0) { c.ready = -1; return false; }
+    c.ready = 1;
+    return true;
+}
+
+// The error this system last reported for a socket operation. ⚠️ Reached through
+// the table, so a caller that failed BEFORE the table was built --- which is the
+// only way `ensure_network' returns false --- is told `kal_err_io' rather than
+// calling through a null pointer.
+inline int last_socket_error() {
+    network_calls& c = net_calls();
+    if (c.ready <= 0 || c.last_error == nullptr) return kal_err_io;
+    return translate_wsa(c.last_error());
+}
+
+// The table, or a null pointer when this system's network interface could not
+// be reached at all. ⚠️ Every operation of both interfaces begins here, so a
+// system without `ws2_32.dll' --- which is not a system this package expects to
+// meet --- reports `kal_err_io' rather than calling through zero.
+inline network_calls* net_or_null() {
+    return ensure_network() ? &net_calls() : nullptr;
 }
 
 // ── addresses ───────────────────────────────────────────────────────────────

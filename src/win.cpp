@@ -20,7 +20,6 @@
 #pragma comment(lib, "synchronization.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "kernel32.lib")
-#pragma comment(lib, "ws2_32.lib")
 #endif
 
 

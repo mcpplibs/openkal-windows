@@ -47,17 +47,21 @@ int bound_ms(kal_u64 ns) {
 // succeeds or fails for a reason of its own, and upon anything else this system
 // reports `WSAENOTSOCK'.
 bool is_socket(SOCKET s) {
+    auto* n = okw::net_or_null();
+    if (n == nullptr) return false;
     ksockaddr_storage ss{};
     int len = static_cast<int>(sizeof ss);
-    if (getsockname(s, &ss, &len) == 0) return true;
-    return WSAGetLastError() != okw::WSAENOTSOCK;
+    if (n->sockname(s, &ss, &len) == 0) return true;
+    return n->last_error() != okw::WSAENOTSOCK;
 }
 
 // Waits for one socket. Reports kal_ok when it is ready, kal_err_again when the
 // bound expired, and a translated error otherwise.
 int await(SOCKET s, short events, kal_u64 ns) {
+    auto* n = okw::net_or_null();
+    if (n == nullptr) return kal_err_not_supported;
     WSAPOLLFD_ p{ s, events, 0 };
-    const int r = WSAPoll(&p, 1, bound_ms(ns));
+    const int r = n->poll(&p, 1, bound_ms(ns));
     if (r < 0) return okw::last_socket_error();
     if (r == 0) return kal_err_again;   // the bound expired
     // A socket reported as failed or hung up is ready in the sense that the
@@ -66,7 +70,6 @@ int await(SOCKET s, short events, kal_u64 ns) {
 }
 
 int await_stream(kal_stream s, short events, kal_u64 ns) {
-    okw::ensure_network();
     const SOCKET raw = static_cast<SOCKET>(s.h);
     if (raw == 0 || raw == INVALID_SOCKET) return kal_err_invalid;
     if (!is_socket(raw)) return kal_err_not_supported;
