@@ -190,12 +190,15 @@ enum : DWORD {
     FILE_NAME_NORMALIZED       = 0x0,
     VOLUME_NAME_DOS            = 0x0,
     FILE_TYPE_DISK             = 0x0001,
+    FILE_TYPE_CHAR             = 0x0002,
+    FILE_TYPE_PIPE             = 0x0003,
 
     HANDLE_FLAG_INHERIT   = 0x1,
     STARTF_USESTDHANDLES  = 0x00000100u,
 
     INFINITE       = 0xFFFFFFFFu,
     WAIT_OBJECT_0  = 0x00000000u,
+    WAIT_TIMEOUT_  = 0x00000102u,
 
     CP_UTF8               = 65001,
     MB_ERR_INVALID_CHARS  = 0x8,
@@ -234,6 +237,13 @@ enum : DWORD {
     ERROR_DIRECTORY             = 267,
     ERROR_DIR_NOT_EMPTY         = 145,
     ERROR_IO_PENDING            = 997,
+
+    // For openkal.exec.
+    MEM_COMMIT   = 0x00001000u,
+    MEM_RESERVE  = 0x00002000u,
+    MEM_RELEASE  = 0x00008000u,
+    PAGE_READWRITE      = 0x04u,
+    PAGE_EXECUTE_READ   = 0x20u,
 };
 
 // ── the functions ───────────────────────────────────────────────────────────
@@ -247,6 +257,10 @@ OKW_IMPORT BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
 // For kal_process_channel. The security attributes decide whether the ends are
 // inheritable, which is what makes one of them able to cross a spawn.
 OKW_IMPORT BOOL   OKW_API CreatePipe(HANDLE*, HANDLE*, SECURITY_ATTRIBUTES*, DWORD);
+// How many bytes a pipe has without taking them, which is the one readiness
+// enquiry on this system that is not `WSAPoll'. src/timeout.cpp says why both
+// are needed.
+OKW_IMPORT BOOL   OKW_API PeekNamedPipe(HANDLE, LPVOID, DWORD, DWORD*, DWORD*, DWORD*);
 OKW_IMPORT BOOL   OKW_API GetConsoleMode(HANDLE, DWORD*);
 OKW_IMPORT BOOL   OKW_API SetConsoleMode(HANDLE, DWORD);
 
@@ -313,8 +327,22 @@ OKW_IMPORT int    OKW_API MultiByteToWideChar(UINT, DWORD, LPCSTR, int, LPWSTR, 
 OKW_IMPORT int    OKW_API WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR, int,
                                    LPCSTR, BOOL*);
 
+// Memory a program may execute, for openkal.exec. The reservation and the
+// change of protection are two calls here as they are on every system this
+// specification targets, and the third is the one that matters on a processor
+// whose instruction path does not see the data path's writes.
+OKW_IMPORT LPVOID OKW_API VirtualAlloc(LPVOID, unsigned long long, DWORD, DWORD);
+OKW_IMPORT BOOL   OKW_API VirtualProtect(LPVOID, unsigned long long, DWORD, DWORD*);
+OKW_IMPORT BOOL   OKW_API VirtualFree(LPVOID, unsigned long long, DWORD);
+OKW_IMPORT BOOL   OKW_API FlushInstructionCache(HANDLE, LPCVOID, unsigned long long);
+
 // From shell32, and the only name this package takes from it.
 OKW_IMPORT LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
+
+// Reaching a library by name at run time, which is how this implementation
+// obtains the network interface. src/endpoint.h says why it is not linked.
+OKW_IMPORT HANDLE OKW_API LoadLibraryW(LPCWSTR);
+OKW_IMPORT void*  OKW_API GetProcAddress(HANDLE, LPCSTR);
 
 // ── ntdll ───────────────────────────────────────────────────────────────────
 //
@@ -324,3 +352,98 @@ OKW_IMPORT LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
 OKW_IMPORT DWORD OKW_API RtlNtStatusToDosError(long);
 
 }  // extern "C"
+
+// ── ws2_32: this system's network interface ─────────────────────────────────
+//
+// ⚠️⚠️ NOT DECLARED AS IMPORTS AND NOT LINKED, AND THE REASON IS A COLLISION
+// RATHER THAN A PREFERENCE.
+//
+// This library's names ARE the BSD names --- `bind', `listen', `accept',
+// `connect'. So does the C library above this implementation: openkal-musl
+// compiles musl's own `src/network/*.c', which define those names and route
+// them through this port. Naming `-lws2_32' on the link line puts BOTH
+// definitions in one program:
+//
+//     ld.exe: libws2_32.a(libws2_32s00165.o): multiple definition of `connect';
+//             musl/src/network/connect.o: first defined here
+//
+// Measured on the first run of this change, on the GNU/PE row of the C
+// library's own continuous integration. It is not an ordering problem: an
+// import library's member defines the thunk AND the `__imp_' pointer together,
+// so reaching for either brings both.
+//
+// ⭐ THE NAMES ARE THEREFORE REACHED AT RUN TIME, THROUGH THE LIBRARY'S OWN
+// LOADER. Nothing of ws2_32 enters this program's symbol table, so the C
+// library above keeps its `bind' and this implementation still reaches the
+// system's. `ws2_32.dll' is a core component of every installation of this
+// system, and src/endpoint.h states what happens if it is somehow absent.
+//
+// ⚠️ AND THREE CONSTANTS DIFFER FROM THE OTHER SYSTEMS' WITHOUT ANNOUNCING IT:
+// `AF_INET6' is 23 here, 30 on macOS and 10 on Linux; `SOL_SOCKET' is 0xffff
+// here and on macOS and 1 on Linux; and this system's `poll' has no bit named
+// POLLIN --- what it has is POLLRDNORM, and a caller that passed the Linux
+// value would be asking about out-of-band data.
+//
+// A socket address here has no length byte, unlike macOS: the family occupies
+// two bytes, as on Linux.
+
+// UINT_PTR on this ABI. It is a handle value and is used as one below.
+using SOCKET = unsigned long long;
+
+inline const SOCKET INVALID_SOCKET = static_cast<SOCKET>(-1);
+
+enum : int {
+    AF_INET_ = 2, AF_INET6_ = 23,
+    SOCK_STREAM_ = 1, SOCK_DGRAM_ = 2,
+    IPPROTO_TCP_ = 6, IPPROTO_UDP_ = 17,
+    SD_RECEIVE_ = 0, SD_SEND_ = 1, SD_BOTH_ = 2,
+};
+
+// What this system's `poll' names its bits. POLLRDNORM and POLLWRNORM are what
+// "there is ordinary data to read" and "an ordinary write would proceed" are
+// called here; POLLIN as a name exists and includes a band this implementation
+// has no operation for.
+enum : short {
+    POLLRDNORM_ = 0x0100, POLLWRNORM_ = 0x0010,
+    POLLERR_ = 0x0001, POLLHUP_ = 0x0002, POLLNVAL_ = 0x0004,
+};
+
+struct WSAPOLLFD_ { SOCKET fd; short events; short revents; };
+
+// This system's socket addresses. The family occupies two bytes and the
+// structure carries no length of its own.
+struct ksockaddr_in {
+    unsigned short family;
+    unsigned short port;        // network order
+    DWORD          addr;        // network order
+    unsigned char  zero[8];
+};
+
+struct ksockaddr_in6 {
+    unsigned short family;
+    unsigned short port;        // network order
+    DWORD          flowinfo;
+    unsigned char  addr[16];
+    DWORD          scope_id;
+};
+
+struct ksockaddr_storage { unsigned char pad[128]; };
+
+// The shapes of the calls, so that a pointer obtained at run time is still
+// type-checked. ⚠️ THE LAYOUT RULE OF THIS FILE APPLIES HERE TOO: a signature
+// that is wrong does not fail to compile, because nothing checks it against the
+// system --- it produces a call with the wrong arguments in the wrong places.
+using pfn_WSAStartup      = int    (OKW_API*)(WORD, void*);
+using pfn_WSAGetLastError = int    (OKW_API*)(void);
+using pfn_WSASocketW      = SOCKET (OKW_API*)(int, int, int, void*, unsigned, DWORD);
+using pfn_closesocket     = int    (OKW_API*)(SOCKET);
+using pfn_bind            = int    (OKW_API*)(SOCKET, const void*, int);
+using pfn_listen          = int    (OKW_API*)(SOCKET, int);
+using pfn_accept          = SOCKET (OKW_API*)(SOCKET, void*, int*);
+using pfn_connect         = int    (OKW_API*)(SOCKET, const void*, int);
+using pfn_shutdown        = int    (OKW_API*)(SOCKET, int);
+using pfn_getsockname     = int    (OKW_API*)(SOCKET, void*, int*);
+using pfn_getpeername     = int    (OKW_API*)(SOCKET, void*, int*);
+using pfn_sendto          = int    (OKW_API*)(SOCKET, const char*, int, int, const void*, int);
+using pfn_recvfrom        = int    (OKW_API*)(SOCKET, char*, int, int, void*, int*);
+using pfn_WSAPoll         = int    (OKW_API*)(WSAPOLLFD_*, ULONG, int);

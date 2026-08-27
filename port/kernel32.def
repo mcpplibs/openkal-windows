@@ -10,6 +10,7 @@ CreatePipe
 CreateProcessW
 CreateThread
 FlushFileBuffers
+FlushInstructionCache
 FreeEnvironmentStringsW
 GetCommandLineW
 GetConsoleMode
@@ -23,13 +24,16 @@ GetFileType
 GetFinalPathNameByHandleW
 GetLastError
 GetLogicalDriveStringsW
+GetProcAddress
 GetProcessHeap
 GetStdHandle
 GetSystemTimePreciseAsFileTime
 HeapAlloc
 HeapFree
+LoadLibraryW
 LocalFree
 MultiByteToWideChar
+PeekNamedPipe
 QueryPerformanceCounter
 QueryPerformanceFrequency
 ReadFile
@@ -39,6 +43,9 @@ SetHandleInformation
 Sleep
 SwitchToThread
 TerminateProcess
+VirtualAlloc
+VirtualFree
+VirtualProtect
 WaitForSingleObject
 WideCharToMultiByte
 WriteFile

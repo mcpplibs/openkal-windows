@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.5.1"
+openkal = "0.8.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.1.1"
+openkal-windows = "0.3.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -32,6 +32,20 @@ An implementation written on Win32 alone would have to recover each directory's
 path with `GetFinalPathNameByHandleW` and concatenate, which is a name resolver
 inside an implementation and is what clause 7.1 excludes. The interface asked
 for the operation this system already had.
+
+**A declined interface is a legitimate outcome, and this system is where that
+stops being theory.** `openkal.space` starts a context in a copy of the calling
+address space. There is no primitive here that does it: `CreateProcessW` starts
+a *named program*, which is `openkal.process` and is a different operation.
+Clause 3 says an implementation provides an interface in whole or not at all,
+and this implementation provides fourteen of the fifteen — so a program that
+calls `kal_space_start` fails at the **link**, naming the operation, which is
+clause 6.1's report and is the loudest one available.
+
+Constructing a copy out of `CreateProcessW` plus a mechanism for carrying the
+caller's memory across would be the simulation clause 3.1 forbids: it would be
+present, it would look like the operation, and what it produced would not be a
+copy of the caller.
 
 **Duplication of the calling image is not a Unix preference.** `openkal.process`
 starts a program and does not duplicate one, and the specification's reason is
@@ -95,16 +109,31 @@ function here, because this environment's loader has already established the
 argument vector, the named values and thread-local storage before it transfers
 control.
 
+## Interfaces provided
+
+Fourteen of the fifteen. `openkal.space` is declined, for the reason above.
+
+The four that openkal 0.8 added and this implementation now provides:
+
+| | on this system |
+| --- | --- |
+| `openkal.net` | Winsock, started once at the first socket and never stopped. ⚠️ `WSASocketW` with a flags word of zero rather than `socket`: the latter makes an **overlapped** handle, and `ReadFile` upon one of those returns before the bytes arrive. A non-overlapped socket is what lets a connection be a stream here with no second transfer path |
+| `openkal.datagram` | the same calls with `SOCK_DGRAM`. ⚠️ This system reports a truncated message as a **failure** where the other two truncate silently; the bytes that fit are delivered either way, and the interface says the excess is lost |
+| `openkal.timeout` | `WSAPoll`, which answers for sockets and for nothing else. A bounded read of a stream that is not a socket reports `kal_err_not_supported` — which the interface's own header anticipates in terms. `kal_timeout_wait_process` is the one operation of the interface this system provides **directly**, because a bounded wait upon an object is the primitive here |
+| `openkal.exec` | `VirtualAlloc` writable, `VirtualProtect` executable, `FlushInstructionCache`. The third call is not optional and the other two systems' implementations do not need to make it explicit |
+
 ## Verification
 
-The conformance suite in the specification package, built for this target:
+The conformance suite in the specification package, built for this target. The
+feature set is enumerated rather than `optional`, and the difference is the one
+interface this implementation declines: a set demanding `space` would fail to
+link naming `kal_space_start` rather than report an observation.
 
 ```bash
-mcpp build --target x86_64-windows-gnu --features full
-./target/*/*/bin/openkal-conformance.exe
+git clone https://github.com/mcpplibs/openkal .spec
+bash .spec/tools/run-conformance.sh openkal-windows . \
+  full,exec,random,terminal,net,datagram,timeout --target x86_64-windows-gnu
 ```
-
-Ninety-one observations held, none failed, none went unexamined.
 
 ## Toolchains
 
