@@ -196,6 +196,7 @@ enum : DWORD {
 
     INFINITE       = 0xFFFFFFFFu,
     WAIT_OBJECT_0  = 0x00000000u,
+    WAIT_TIMEOUT_  = 0x00000102u,
 
     CP_UTF8               = 65001,
     MB_ERR_INVALID_CHARS  = 0x8,
@@ -234,6 +235,13 @@ enum : DWORD {
     ERROR_DIRECTORY             = 267,
     ERROR_DIR_NOT_EMPTY         = 145,
     ERROR_IO_PENDING            = 997,
+
+    // For openkal.exec.
+    MEM_COMMIT   = 0x00001000u,
+    MEM_RESERVE  = 0x00002000u,
+    MEM_RELEASE  = 0x00008000u,
+    PAGE_READWRITE      = 0x04u,
+    PAGE_EXECUTE_READ   = 0x20u,
 };
 
 // ── the functions ───────────────────────────────────────────────────────────
@@ -313,6 +321,15 @@ OKW_IMPORT int    OKW_API MultiByteToWideChar(UINT, DWORD, LPCSTR, int, LPWSTR, 
 OKW_IMPORT int    OKW_API WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR, int,
                                    LPCSTR, BOOL*);
 
+// Memory a program may execute, for openkal.exec. The reservation and the
+// change of protection are two calls here as they are on every system this
+// specification targets, and the third is the one that matters on a processor
+// whose instruction path does not see the data path's writes.
+OKW_IMPORT LPVOID OKW_API VirtualAlloc(LPVOID, unsigned long long, DWORD, DWORD);
+OKW_IMPORT BOOL   OKW_API VirtualProtect(LPVOID, unsigned long long, DWORD, DWORD*);
+OKW_IMPORT BOOL   OKW_API VirtualFree(LPVOID, unsigned long long, DWORD);
+OKW_IMPORT BOOL   OKW_API FlushInstructionCache(HANDLE, LPCVOID, unsigned long long);
+
 // From shell32, and the only name this package takes from it.
 OKW_IMPORT LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
 
@@ -322,5 +339,99 @@ OKW_IMPORT LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
 // have been since this package was written, for the reason recorded there;
 // these are the calls that take them.
 OKW_IMPORT DWORD OKW_API RtlNtStatusToDosError(long);
+
+}  // extern "C"
+
+// ── ws2_32: this system's network interface ─────────────────────────────────
+//
+// ⚠️⚠️ THIS IS THE ONE PART OF THE SYSTEM WHOSE ERROR VALUES ARE NOT THE ONES
+// EVERYTHING ELSE HERE REPORTS. `GetLastError' answers for the calls above and
+// `WSAGetLastError' for these, and the two numbering schemes do not overlap ---
+// a network failure is ten thousand and something. src/endpoint.h carries the
+// second mapping for that reason; using `translate_win32' on a socket error
+// would produce `kal_err_io' for every one of them.
+//
+// ⚠️ AND THREE CONSTANTS DIFFER FROM THE OTHER SYSTEMS' WITHOUT ANNOUNCING IT:
+// `AF_INET6' is 23 here, 30 on macOS and 10 on Linux; `SOL_SOCKET' is 0xffff
+// here and on macOS and 1 on Linux; and this system's `poll' has no bit named
+// POLLIN --- what it has is POLLRDNORM, and a caller that passed the Linux
+// value would be asking about out-of-band data.
+//
+// A socket address here has no length byte, unlike macOS: the family occupies
+// two bytes, as on Linux.
+
+// UINT_PTR on this ABI. It is a handle value and is used as one below.
+using SOCKET = unsigned long long;
+
+inline const SOCKET INVALID_SOCKET = static_cast<SOCKET>(-1);
+
+enum : int { SOCKET_ERROR_ = -1 };
+
+enum : int {
+    AF_INET_ = 2, AF_INET6_ = 23,
+    SOCK_STREAM_ = 1, SOCK_DGRAM_ = 2,
+    IPPROTO_TCP_ = 6, IPPROTO_UDP_ = 17,
+    SOL_SOCKET_ = 0xffff, SO_REUSEADDR_ = 0x0004,
+    SD_RECEIVE_ = 0, SD_SEND_ = 1, SD_BOTH_ = 2,
+};
+
+// What this system's `poll' names its bits. POLLRDNORM and POLLWRNORM are what
+// "there is ordinary data to read" and "an ordinary write would proceed" are
+// called here; POLLIN as a name exists and includes a band this implementation
+// has no operation for.
+enum : short {
+    POLLRDNORM_ = 0x0100, POLLWRNORM_ = 0x0010,
+    POLLERR_ = 0x0001, POLLHUP_ = 0x0002, POLLNVAL_ = 0x0004,
+};
+
+struct WSAPOLLFD_ { SOCKET fd; short events; short revents; };
+
+// This system's socket addresses. The family occupies two bytes and the
+// structure carries no length of its own.
+struct ksockaddr_in {
+    unsigned short family;
+    unsigned short port;        // network order
+    DWORD          addr;        // network order
+    unsigned char  zero[8];
+};
+
+struct ksockaddr_in6 {
+    unsigned short family;
+    unsigned short port;        // network order
+    DWORD          flowinfo;
+    unsigned char  addr[16];
+    DWORD          scope_id;
+};
+
+struct ksockaddr_storage { unsigned char pad[128]; };
+
+extern "C" {
+
+// ⚠️ THE STARTUP RECORD IS OPAQUE AND LARGER THAN THE DOCUMENTED LAYOUT, WHICH
+// IS THE OPPOSITE OF THE RULE THIS FILE FOLLOWS FOR EVERY OTHER STRUCTURE.
+// The rule is there because a structure this package FILLS IN and the system
+// reads must have the documented shape. This one the system fills in and this
+// package never reads: nothing here needs a member of it, so a buffer larger
+// than the record cannot be the wrong shape.
+OKW_IMPORT int    OKW_API WSAStartup(WORD, void*);
+OKW_IMPORT int    OKW_API WSAGetLastError(void);
+
+// `WSASocketW' rather than `socket', and the last argument is why. `socket'
+// makes an overlapped handle; a flags word of zero does not, and a
+// non-overlapped socket is one `ReadFile' and `WriteFile' transfer through
+// synchronously --- which is what openkal.stream's operations use here and is
+// what makes a connection a stream on this system without a second code path.
+OKW_IMPORT SOCKET OKW_API WSASocketW(int, int, int, void*, unsigned, DWORD);
+OKW_IMPORT int    OKW_API closesocket(SOCKET);
+OKW_IMPORT int    OKW_API bind(SOCKET, const void*, int);
+OKW_IMPORT int    OKW_API listen(SOCKET, int);
+OKW_IMPORT SOCKET OKW_API accept(SOCKET, void*, int*);
+OKW_IMPORT int    OKW_API connect(SOCKET, const void*, int);
+OKW_IMPORT int    OKW_API shutdown(SOCKET, int);
+OKW_IMPORT int    OKW_API getsockname(SOCKET, void*, int*);
+OKW_IMPORT int    OKW_API getpeername(SOCKET, void*, int*);
+OKW_IMPORT int    OKW_API sendto(SOCKET, const char*, int, int, const void*, int);
+OKW_IMPORT int    OKW_API recvfrom(SOCKET, char*, int, int, void*, int*);
+OKW_IMPORT int    OKW_API WSAPoll(WSAPOLLFD_*, ULONG, int);
 
 }  // extern "C"

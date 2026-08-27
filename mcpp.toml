@@ -1,7 +1,7 @@
 [package]
 namespace   = "mcpplibs"
 name        = "openkal-windows"
-version     = "0.2.0"
+version     = "0.3.0"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
 
@@ -49,7 +49,8 @@ openkal = "0.8.0"
 # predicate the second one linked with none of these libraries and failed on
 # `GetStdHandle`.
 [target.'cfg(all(windows, not(env = "msvc")))'.build]
-ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt"]
+ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt",
+           "-lws2_32"]
 
 # Exceptions and run-time type information, on the one ABI where their absence
 # is asserted.

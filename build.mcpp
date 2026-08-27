@@ -117,6 +117,7 @@ int main() {
     mcpp::rerun_if_changed("port/shell32.def");
     mcpp::rerun_if_changed("port/synchronization.def");
     mcpp::rerun_if_changed("port/bcrypt.def");
+    mcpp::rerun_if_changed("port/ws2_32.def");
 
     if (host_is_windows()) return 0;
 
@@ -139,7 +140,7 @@ int main() {
     const std::string tool = dlltool();
 
     for (auto name : { "kernel32", "ntdll", "shell32", "synchronization",
-                       "bcrypt" }) {
+                       "bcrypt", "ws2_32" }) {
         const auto def = std::format("{}/port/{}.def", root, name);
         const auto lib = std::format("{}/lib{}.a", out, name);
         // ⚠️ `-m i386:x86-64` is stated. See port/README.md: the 32-bit ABI

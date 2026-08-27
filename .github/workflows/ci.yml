@@ -226,7 +226,21 @@ jobs:
         run: |
           extra=''
           [ -n '${{ matrix.target }}' ] && extra='--target ${{ matrix.target }}'
-          bash .spec/tools/run-conformance.sh openkal-windows . full $extra
+          # ⚠️ THE SET IS ENUMERATED AND `optional` IS NOT NAMED, AND THE
+          # DIFFERENCE IS ONE INTERFACE.
+          #
+          # `optional` includes `space`, which this system does not provide:
+          # there is no primitive here that copies an address space and starts a
+          # context in the copy. A set demanding it would not report an
+          # observation that did not hold — it would fail to LINK, naming
+          # `kal_space_start`, which is clause 6.1's report arriving where a
+          # report was not wanted.
+          #
+          # So the six this implementation does provide are named, and the
+          # seventh is absent from the list for the same reason it is absent
+          # from the objects.
+          bash .spec/tools/run-conformance.sh openkal-windows . \
+            full,exec,random,terminal,net,datagram,timeout $extra
 
   # ---------------------------------------------------------------------------
   # From a system that is not this one.
@@ -343,7 +357,8 @@ jobs:
         env:
           WINEDEBUG: '-all'
         run: |
-          bash .spec/tools/run-conformance.sh openkal-windows . full \
+          bash .spec/tools/run-conformance.sh openkal-windows . \
+            full,exec,random,terminal,net,datagram,timeout \
             --target x86_64-windows-gnu
 
       - name: The exported surface is complete and contains nothing else

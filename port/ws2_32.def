@@ -1,0 +1,37 @@
+; This system's network interface, and nothing else from this library.
+;
+; ⭐ THE LIST IS WHAT src/net.cpp, src/datagram.cpp AND src/timeout.cpp CALL,
+; obtained the way the other four lists were obtained: the objects of a complete
+; build were given to `nm' and the undefined names are these. A list produced by
+; reading the header would contain names the configured build never uses.
+;
+; ⚠️ `WSASocketW' AND NOT `socket', AND THE DIFFERENCE IS LOAD-BEARING. `socket'
+; makes an OVERLAPPED handle, upon which `ReadFile' returns before the bytes
+; have arrived; the flags word `WSASocketW' takes makes one that is not, and
+; that is what lets openkal.stream's operations here --- which are `ReadFile'
+; and `WriteFile' --- transfer a connection's bytes with no second code path.
+; src/win32.h records the same thing beside the declaration.
+;
+; ⚠️ `WSACleanup' IS DELIBERATELY ABSENT. This implementation starts the network
+; interface once and never stops it: the interface stays available for the life
+; of the image, which is what a program that opened a socket wants, and a
+; reference count that reached zero would close every socket the program still
+; held. src/endpoint.h records it beside the one call that starts it.
+;
+; Generated into an import library by build.mcpp; see port/README.md.
+LIBRARY ws2_32.dll
+EXPORTS
+WSAStartup
+WSAGetLastError
+WSASocketW
+WSAPoll
+closesocket
+bind
+listen
+accept
+connect
+shutdown
+getsockname
+getpeername
+sendto
+recvfrom
