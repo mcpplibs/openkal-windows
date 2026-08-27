@@ -1,7 +1,7 @@
 [package]
 namespace   = "mcpplibs"
 name        = "openkal-windows"
-version     = "0.1.5"
+version     = "0.2.0"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
 
@@ -18,7 +18,7 @@ authors     = ["mcpplibs"]
 repo        = "https://github.com/mcpplibs/openkal-windows"
 
 [dependencies]
-openkal = "0.7.0"
+openkal = { git = "https://github.com/mcpplibs/openkal", branch = "feat/openkal-0.8" }
 
 # The package contributes definitions and no modules. The interface it
 # implements is declared by the specification package, which this package

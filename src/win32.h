@@ -245,6 +245,22 @@ OKW_IMPORT DWORD  OKW_API GetLastError(void);
 OKW_IMPORT DWORD  OKW_API GetFileType(HANDLE);
 OKW_IMPORT BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
 OKW_IMPORT BOOL   OKW_API GetConsoleMode(HANDLE, DWORD*);
+OKW_IMPORT BOOL   OKW_API SetConsoleMode(HANDLE, DWORD);
+
+// The console's dimensions, for openkal.terminal. The structure is this
+// environment's and is declared here for the reason every other structure in
+// this file is: it belongs to the environment rather than to a C library, and
+// this implementation has none to take it from.
+struct COORD_ { short X; short Y; };
+struct SMALL_RECT_ { short Left; short Top; short Right; short Bottom; };
+struct CONSOLE_SCREEN_BUFFER_INFO_ {
+    COORD_      dwSize;
+    COORD_      dwCursorPosition;
+    unsigned short wAttributes;
+    SMALL_RECT_ srWindow;
+    COORD_      dwMaximumWindowSize;
+};
+OKW_IMPORT BOOL OKW_API GetConsoleScreenBufferInfo(HANDLE, CONSOLE_SCREEN_BUFFER_INFO_*);
 
 OKW_IMPORT BOOL   OKW_API ReadFile(HANDLE, LPVOID, DWORD, DWORD*, OVERLAPPED*);
 OKW_IMPORT BOOL   OKW_API WriteFile(HANDLE, LPCVOID, DWORD, DWORD*, OVERLAPPED*);
