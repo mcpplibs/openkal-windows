@@ -113,14 +113,47 @@ struct file_directory_information {
     wchar_t       file_name[1];
 };
 
+// The index this environment keeps for a file, which is unique within a volume.
+struct file_internal_information { okw_i64 index_number; };
+
+// What the object manager reports about the volume a handle is on. Only the
+// serial number is read; the label follows it and is not.
+struct file_fs_volume_information {
+    okw_i64       creation_time;
+    unsigned long serial_number;
+    unsigned long label_length;
+    unsigned char supports_objects;
+    wchar_t       label[1];
+};
+
+// What the object manager reports about the volume's abilities.
+struct file_fs_attribute_information {
+    unsigned long attributes;
+    long          maximum_component_name_length;
+    unsigned long file_system_name_length;
+    wchar_t       file_system_name[1];
+};
+
+enum : unsigned long {
+    fs_case_sensitive_search  = 0x00000001u,
+    fs_supports_reparse_points = 0x00000080u,
+};
+
 enum : int {
     file_directory_information_class = 1,
+    file_internal_information_class  = 6,
     file_basic_information_class     = 4,
     file_standard_information_class  = 5,
     file_position_information_class  = 14,
     file_disposition_information_class = 13,
     file_end_of_file_information_class = 20,
     file_rename_information_class    = 10,
+};
+
+// The classes NtQueryVolumeInformationFile takes.
+enum : int {
+    fs_volume_information_class    = 1,
+    fs_attribute_information_class = 5,
 };
 
 // The dispositions NtCreateFile takes. They are the whole of what
@@ -138,6 +171,8 @@ enum : unsigned long {
     file_synchronous_io_nonalert = 0x00000020,
     file_non_directory_file = 0x00000040,
     file_open_for_backup_intent = 0x00004000,
+    // Opens the node itself rather than what its content names.
+    file_open_reparse_point     = 0x00200000,
     obj_case_insensitive   = 0x00000040,
 };
 
@@ -166,6 +201,8 @@ __declspec(dllimport) long __stdcall NtWriteFile(void* handle, void* event, void
                            okw_i64* offset, unsigned long* key);
 __declspec(dllimport) long __stdcall NtQueryInformationFile(void* handle, io_status_block* status, void* info,
                                       unsigned long length, int cls);
+__declspec(dllimport) long __stdcall NtQueryVolumeInformationFile(void* handle, io_status_block* status,
+                                      void* info, unsigned long length, int cls);
 __declspec(dllimport) long __stdcall NtSetInformationFile(void* handle, io_status_block* status, void* info,
                                     unsigned long length, int cls);
 __declspec(dllimport) long __stdcall NtQueryDirectoryFile(void* handle, void* event, void* apc, void* apc_context,

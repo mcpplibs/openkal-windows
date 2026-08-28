@@ -119,8 +119,8 @@ int kal_task_wake(const kal_u32* word, kal_uintptr count, kal_uintptr* woken) {
 // that compiled the program: this environment's loader establishes it for every
 // thread it creates, which is why the position can be reported here without
 // this implementation doing anything to earn it.
-const kal_uintptr kal_task_props =
+kal_uintptr kal_task_props(void) { return
     KAL_TASK_PROP_PREEMPTIVE | KAL_TASK_PROP_PARALLEL
-  | KAL_TASK_PROP_WAIT_TIMEOUT | KAL_TASK_PROP_THREAD_LOCAL;
+  | KAL_TASK_PROP_WAIT_TIMEOUT | KAL_TASK_PROP_THREAD_LOCAL; }
 
 }

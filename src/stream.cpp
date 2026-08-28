@@ -17,9 +17,10 @@ kal_stream kal_stdin (void) { return kal_stream{ reinterpret_cast<kal_uintptr>(G
 kal_stream kal_stdout(void) { return kal_stream{ reinterpret_cast<kal_uintptr>(GetStdHandle(STD_OUTPUT_HANDLE)) }; }
 kal_stream kal_stderr(void) { return kal_stream{ reinterpret_cast<kal_uintptr>(GetStdHandle(STD_ERROR_HANDLE)) }; }
 
-kal_io_result kal_stream_write(kal_stream s, const void* buf, kal_uintptr len) {
+// ONE SIGNED WORD: the count, or the negated condition when no byte moved.
+kal_intptr kal_stream_write(kal_stream s, const void* buf, kal_uintptr len) {
     void* h = handle_of(s);
-    if (!valid(h)) return { 0, kal_err_invalid };
+    if (!valid(h)) return -kal_err_invalid;
     const auto* p = static_cast<const unsigned char*>(buf);
     kal_uintptr done = 0;
     while (done < len) {
@@ -30,17 +31,19 @@ kal_io_result kal_stream_write(kal_stream s, const void* buf, kal_uintptr len) {
         const kal_uintptr want = len - done;
         const DWORD chunk = want > 0x7fffffffu ? 0x7fffffffu : static_cast<DWORD>(want);
         DWORD written = 0;
-        if (!WriteFile(h, p + done, chunk, &written, nullptr))
-            return { done, okw::translate_win32(GetLastError()) };
+        if (!WriteFile(h, p + done, chunk, &written, nullptr)) {
+            if (done != 0) return static_cast<kal_intptr>(done);
+            return -okw::translate_win32(GetLastError());
+        }
         if (written == 0) break;
         done += written;
     }
-    return { done, done == len ? kal_ok : kal_err_io };
+    return static_cast<kal_intptr>(done);
 }
 
-kal_io_result kal_stream_read(kal_stream s, void* buf, kal_uintptr len) {
+kal_intptr kal_stream_read(kal_stream s, void* buf, kal_uintptr len) {
     void* h = handle_of(s);
-    if (!valid(h)) return { 0, kal_err_invalid };
+    if (!valid(h)) return -kal_err_invalid;
     const DWORD want = len > 0x7fffffffu ? 0x7fffffffu : static_cast<DWORD>(len);
     DWORD got = 0;
     if (!ReadFile(h, buf, want, &got, nullptr)) {
@@ -48,12 +51,12 @@ kal_io_result kal_stream_read(kal_stream s, void* buf, kal_uintptr len) {
         // The end of a pipe whose other side has gone is the end of input, and
         // this environment reports it as a failure. A caller that could not
         // tell the two apart would treat every completed transfer as broken.
-        if (e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF) return { 0, kal_ok };
-        return { 0, okw::translate_win32(e) };
+        if (e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF) return 0;
+        return -okw::translate_win32(e);
     }
     // A short read is reported as it occurred: unlike a short write it carries
     // information the caller requires, and zero denotes the end of input.
-    return { got, kal_ok };
+    return static_cast<kal_intptr>(got);
 }
 
 int kal_stream_flush(kal_stream s) {

@@ -77,22 +77,22 @@ int kal_datagram_local(kal_datagram d, kal_endpoint* out) {
     return okw::from_system(ss, *out);
 }
 
-kal_io_result kal_datagram_send_to(kal_datagram d, const void* buf, kal_uintptr len,
-                                   const kal_endpoint* to) {
+kal_intptr kal_datagram_send_to(kal_datagram d, const void* buf, kal_uintptr len,
+                                const kal_endpoint* to) {
     const SOCKET s = socket_of(d);
-    if (bad(s) || to == nullptr) return { 0, kal_err_invalid };
-    if (len > kMaxOne) return { 0, kal_err_invalid };
+    if (bad(s) || to == nullptr) return -kal_err_invalid;
+    if (len > kMaxOne) return -kal_err_invalid;
 
     auto* n = net();
-    if (n == nullptr) return { 0, kal_err_io };
+    if (n == nullptr) return -kal_err_io;
     ksockaddr_storage ss{};
     int addrlen = 0;
     if (const int rc = okw::to_system(*to, ss, addrlen); rc != kal_ok)
-        return { 0, rc };
+        return -rc;
 
     const int r = n->send_to(s, static_cast<const char*>(buf), static_cast<int>(len),
                              0, &ss, addrlen);
-    if (r < 0) return { 0, okw::last_socket_error() };
+    if (r < 0) return -okw::last_socket_error();
 
     // A MESSAGE IS SENT WHOLE OR NOT AT ALL, which is what this interface
     // states. The system reports a count anyway; a count short of the length
@@ -101,17 +101,17 @@ kal_io_result kal_datagram_send_to(kal_datagram d, const void* buf, kal_uintptr 
     // partial send this interface says cannot occur, so it is reported as a
     // failure of the medium instead.
     const kal_uintptr sent = static_cast<kal_uintptr>(r);
-    return { sent, sent == len ? kal_ok : kal_err_io };
+    return sent == len ? static_cast<kal_intptr>(sent) : -kal_err_io;
 }
 
-kal_io_result kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
-                                     kal_endpoint* from) {
+kal_intptr kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
+                                  kal_endpoint* from) {
     const SOCKET s = socket_of(d);
-    if (bad(s)) return { 0, kal_err_invalid };
+    if (bad(s)) return -kal_err_invalid;
     if (len > kMaxOne) len = kMaxOne;
 
     auto* n = net();
-    if (n == nullptr) return { 0, kal_err_io };
+    if (n == nullptr) return -kal_err_io;
     ksockaddr_storage ss{};
     int addrlen = static_cast<int>(sizeof ss);
 
@@ -137,9 +137,12 @@ kal_io_result kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
                 from->addr_len = 0;
                 from->port     = 0;
             }
-            return { len, kal_ok };
+            // A message longer than the buffer: the bytes placed are the
+            // buffer's length, and reporting the count is reporting what the
+            // caller may read.
+            return static_cast<kal_intptr>(len);
         }
-        return { 0, okw::last_socket_error() };
+        return -okw::last_socket_error();
     }
 
     if (from != nullptr) {
@@ -152,7 +155,7 @@ kal_io_result kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
             from->port     = 0;
         }
     }
-    return { static_cast<kal_uintptr>(r), kal_ok };
+    return static_cast<kal_intptr>(r);
 }
 
 void kal_datagram_close(kal_datagram d) {
@@ -166,6 +169,6 @@ void kal_datagram_close(kal_datagram d) {
 // been set, and this interface has no operation that would set it; a word
 // claiming a facility no operation reaches is the disagreement clause 6.2 exists
 // to prevent.
-const kal_uintptr kal_datagram_props = KAL_DGRAM_PROP_IPV6;
+kal_uintptr kal_datagram_props(void) { return KAL_DGRAM_PROP_IPV6; }
 
 }  // extern "C"

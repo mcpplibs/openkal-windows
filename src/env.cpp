@@ -101,15 +101,30 @@ extern "C" {
 
 kal_uintptr kal_env_arg_count(void) { prepare(); return static_cast<kal_uintptr>(g_argc); }
 
-const char* kal_env_arg(kal_uintptr index, kal_uintptr* len) {
+// EVERY VALUE IS COPIED INTO THE CALLER'S BUFFER, and each reports the length
+// the value HAS. These answered with a pointer into this implementation's own
+// storage, which is meaningful only while the implementation shares the
+// caller's address space.
+namespace {
+kal_intptr give(const char* v, kal_uintptr n, char* out, kal_uintptr cap) {
+    if (out != nullptr && cap != 0) {
+        const kal_uintptr room = n < cap ? n : cap;
+        for (kal_uintptr i = 0; i < room; ++i) out[i] = v[i];
+    }
+    return static_cast<kal_intptr>(n);
+}
+}  // namespace
+
+kal_intptr kal_env_arg(kal_uintptr index, char* out, kal_uintptr cap) {
     prepare();
-    if (index >= static_cast<kal_uintptr>(g_argc)) { if (len) *len = 0; return nullptr; }
-    if (len) *len = g_argv_len[index];
-    return g_argv[index];
+    if (index >= static_cast<kal_uintptr>(g_argc)) return -kal_err_not_found;
+    return give(g_argv[index], g_argv_len[index], out, cap);
 }
 
-const char* kal_env_var(const char* name, kal_uintptr name_len, kal_uintptr* value_len) {
+kal_intptr kal_env_var(const char* name, kal_uintptr name_len,
+                       char* out, kal_uintptr cap) {
     prepare();
+    if (name == nullptr) return -kal_err_invalid;
     for (int i = 0; i < g_varc; ++i) {
         // Names are compared without regard to case, because that is how this
         // environment compares them. A program that set PATH and asked for Path
@@ -124,23 +139,19 @@ const char* kal_env_var(const char* name, kal_uintptr name_len, kal_uintptr* val
             if (a != b) { equal = false; break; }
         }
         if (!equal) continue;
-        if (value_len) *value_len = g_value_len[i];
-        return g_value[i];
+        return give(g_value[i], g_value_len[i], out, cap);
     }
-    if (value_len) *value_len = 0;
-    return nullptr;
+    // A name that is not there is distinct from one whose value is empty.
+    return -kal_err_not_found;
 }
 
 kal_uintptr kal_env_var_count(void) { prepare(); return static_cast<kal_uintptr>(g_varc); }
 
-const char* kal_env_var_at(kal_uintptr index, kal_uintptr* name_len,
-                           const char** value, kal_uintptr* value_len) {
+// The NAME at a position. The value is then obtained by kal_env_var.
+kal_intptr kal_env_var_at(kal_uintptr index, char* out, kal_uintptr cap) {
     prepare();
-    if (index >= static_cast<kal_uintptr>(g_varc)) return nullptr;
-    if (name_len)  *name_len  = g_name_len[index];
-    if (value)     *value     = g_value[index];
-    if (value_len) *value_len = g_value_len[index];
-    return g_entry[index];
+    if (index >= static_cast<kal_uintptr>(g_varc)) return -kal_err_not_found;
+    return give(g_entry[index], g_name_len[index], out, cap);
 }
 
 }

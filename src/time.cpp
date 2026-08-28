@@ -73,7 +73,7 @@ void kal_time_sleep(kal_duration ns) {
 // The counter this environment supplies continues while the machine is
 // suspended, which the corresponding position records. That is the opposite of
 // the Linux implementation, and the difference is why the position exists.
-const kal_uintptr kal_time_props =
-    KAL_TIME_PROP_WALL_AVAILABLE | KAL_TIME_PROP_SLEEP_PRECISE;
+kal_uintptr kal_time_props(void) { return
+    KAL_TIME_PROP_WALL_AVAILABLE | KAL_TIME_PROP_SLEEP_PRECISE; }
 
 }
