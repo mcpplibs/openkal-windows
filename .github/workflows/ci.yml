@@ -189,8 +189,30 @@ jobs:
           #
           # A check that reads source files must say what they are encoded in, or
           # it reports on the runner's locale.
-          declared = set(re.findall(r'OKW_IMPORT\s+\w+\s+OKW_API\s+(\w+)\s*\(',
-                                    open("src/win32.h", encoding="utf-8").read()))
+          # ⚠️⚠️ EVERY HEADER, AND EVERY SPELLING. THIS CHECK MISSED THE SECOND
+          # OF EACH AND THE DEFECT IT WAS WRITTEN FOR HAPPENED AGAIN.
+          #
+          # It read `src/win32.h' alone and matched `OKW_IMPORT ... OKW_API'
+          # alone. `src/win.h' declares the object manager's entries in the
+          # plain form, `__declspec(dllimport) long __stdcall Nt...', so four of
+          # them were outside what this looked at --- and the failure appeared
+          # exactly where the comment above says it appeared last time, in
+          # openkal-llvm-runtime's cross-build, one repository away:
+          #
+          #     ld.lld: error: undefined symbol:
+          #         __declspec(dllimport) NtQueryVolumeInformationFile
+          #
+          # ⭐ THE CHECK WAS RIGHT AND ITS SCOPE WAS WRONG, which is the harder
+          # kind to notice: it reported a number, the number was of the names it
+          # knew about, and nothing said the set was partial. So the headers are
+          # globbed and both forms are matched.
+          declared = set()
+          headers = sorted(glob.glob("src/*.h"))
+          for h in headers:
+              text = open(h, encoding="utf-8").read()
+              declared |= set(re.findall(r'OKW_IMPORT\s+\w+\s+OKW_API\s+(\w+)\s*\(', text))
+              declared |= set(re.findall(
+                  r'__declspec\(dllimport\)[\w\s\*]*?(\w+)\s*\(', text))
           exported = set()
           for f in glob.glob("port/*.def"):
               body = open(f, encoding="utf-8").read().split("EXPORTS", 1)
@@ -203,10 +225,10 @@ jobs:
               print(f"::error::declared={len(declared)} exported={len(exported)}; nothing was compared")
               sys.exit(1)
           missing = sorted(declared - exported)
-          print(f"  {len(declared)} declared, {len(exported)} exported across "
-                f"{len(glob.glob('port/*.def'))} .def files")
+          print(f"  {len(declared)} declared across {len(headers)} headers, "
+                f"{len(exported)} exported across {len(glob.glob('port/*.def'))} .def files")
           if missing:
-              print("::error::declared in src/win32.h and exported by no .def:")
+              print("::error::declared in src/*.h and exported by no .def:")
               for m in missing: print(f"        {m}")
               sys.exit(1)
           print("  ok  every declared name is exported")

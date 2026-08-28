@@ -7,7 +7,11 @@ LIBRARY ntdll.dll
 EXPORTS
 NtClose
 NtCreateFile
+NtFlushBuffersFile
 NtQueryDirectoryFile
 NtQueryInformationFile
+NtQueryVolumeInformationFile
+NtReadFile
 NtSetInformationFile
+NtWriteFile
 RtlNtStatusToDosError
