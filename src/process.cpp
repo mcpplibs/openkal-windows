@@ -152,14 +152,14 @@ int kal_process_spawn(kal_dir base,
     STARTUPINFOW startup{};
     startup.cb = sizeof startup;
     bool inherit = false;
-    if (streams && (streams->in || streams->out || streams->err)) {
+    if (streams && (streams->in.h || streams->out.h || streams->err.h)) {
         startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput  = streams->in  ? reinterpret_cast<void*>(streams->in)
-                                          : GetStdHandle(STD_INPUT_HANDLE);
-        startup.hStdOutput = streams->out ? reinterpret_cast<void*>(streams->out)
-                                          : GetStdHandle(STD_OUTPUT_HANDLE);
-        startup.hStdError  = streams->err ? reinterpret_cast<void*>(streams->err)
-                                          : GetStdHandle(STD_ERROR_HANDLE);
+        startup.hStdInput  = streams->in.h  ? reinterpret_cast<void*>(streams->in.h)
+                                            : GetStdHandle(STD_INPUT_HANDLE);
+        startup.hStdOutput = streams->out.h ? reinterpret_cast<void*>(streams->out.h)
+                                            : GetStdHandle(STD_OUTPUT_HANDLE);
+        startup.hStdError  = streams->err.h ? reinterpret_cast<void*>(streams->err.h)
+                                            : GetStdHandle(STD_ERROR_HANDLE);
         SetHandleInformation(startup.hStdInput,  HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
         SetHandleInformation(startup.hStdOutput, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
         SetHandleInformation(startup.hStdError,  HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
@@ -290,9 +290,9 @@ void kal_process_close(kal_process p) {
 // KAL_PROCESS_PROP_GRANT_DIR is deliberately absent: kal_process_spawn_with
 // refuses a non-empty set of grants here, and a word claiming a facility the
 // next call refuses is the disagreement clause 6.2 exists to prevent.
-const kal_uintptr kal_process_props =
+kal_uintptr kal_process_props(void) { return
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
   | KAL_PROCESS_PROP_EXIT_STATUS
-  | KAL_PROCESS_PROP_CHANNEL;
+  | KAL_PROCESS_PROP_CHANNEL; }
 
 }

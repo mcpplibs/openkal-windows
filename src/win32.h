@@ -332,6 +332,22 @@ OKW_IMPORT int    OKW_API WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR, 
 // specification targets, and the third is the one that matters on a processor
 // whose instruction path does not see the data path's writes.
 OKW_IMPORT LPVOID OKW_API VirtualAlloc(LPVOID, unsigned long long, DWORD, DWORD);
+
+// What this system reports about itself. Only two fields are read and the rest
+// are named so that the record has the layout the system writes.
+struct SYSTEM_INFO {
+    DWORD  dwOemId;
+    DWORD  dwPageSize;
+    LPVOID lpMinimumApplicationAddress;
+    LPVOID lpMaximumApplicationAddress;
+    unsigned long long dwActiveProcessorMask;
+    DWORD  dwNumberOfProcessors;
+    DWORD  dwProcessorType;
+    DWORD  dwAllocationGranularity;
+    unsigned short wProcessorLevel;
+    unsigned short wProcessorRevision;
+};
+OKW_IMPORT void OKW_API GetSystemInfo(SYSTEM_INFO*);
 OKW_IMPORT BOOL   OKW_API VirtualProtect(LPVOID, unsigned long long, DWORD, DWORD*);
 OKW_IMPORT BOOL   OKW_API VirtualFree(LPVOID, unsigned long long, DWORD);
 OKW_IMPORT BOOL   OKW_API FlushInstructionCache(HANDLE, LPCVOID, unsigned long long);

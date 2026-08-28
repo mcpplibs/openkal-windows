@@ -121,7 +121,29 @@ long open_relative(void* root, const char* name, kal_uintptr len,
                              nullptr, 0);
 }
 
-int fill(void* h, kal_node_info* out) {
+// The caller must state how much of the structure exists on its side.
+bool info_ok(const kal_node_info* out) {
+    return out != nullptr && out->self_size >= sizeof(kal_u32) * 2;
+}
+
+void put_bytes(void* dst, const void* src, kal_uintptr n) {
+    auto* d = static_cast<unsigned char*>(dst);
+    const auto* s = static_cast<const unsigned char*>(src);
+    for (kal_uintptr i = 0; i < n; ++i) d[i] = s[i];
+}
+
+// Copies a name into a caller's buffer and reports the length it HAS.
+kal_uintptr put_name(const char* src, kal_uintptr n,
+                     char* out, kal_uintptr cap, kal_uintptr* len) {
+    if (out != nullptr && cap != 0) put_bytes(out, src, n < cap ? n : cap);
+    if (len) *len = n;
+    return n;
+}
+
+// Writes no more of the structure than the caller says exists on its side, and
+// reports which fields it filled.
+int fill(void* h, kal_u32 wanted, kal_node_info* out) {
+    (void)wanted;
     okw::io_status_block s{};
     okw::file_basic_information basic{};
     okw::file_standard_information standard{};
@@ -132,13 +154,74 @@ int fill(void* h, kal_node_info* out) {
                                     okw::file_standard_information_class);
     if (!okw::ok(r)) return okw::translate_nt(r);
 
-    out->size = static_cast<kal_uintptr>(standard.end_of_file);
-    out->modified_ns = to_nanoseconds(basic.last_write_time);
-    out->kind = (basic.attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? kal_node_link
-              : (basic.attributes & FILE_ATTRIBUTE_DIRECTORY)     ? kal_node_directory
-                                                                  : kal_node_file;
-    out->writable = (basic.attributes & FILE_ATTRIBUTE_READONLY) ? 0 : 1;
+    const kal_u32 self = out->self_size;
+    kal_node_info v{};
+    v.self_size   = self;
+    v.present     = KAL_INFO_KIND | KAL_INFO_SIZE | KAL_INFO_MODIFIED
+                  | KAL_INFO_WRITABLE;
+    v.size        = static_cast<kal_u64>(standard.end_of_file);
+    v.modified_ns = to_nanoseconds(basic.last_write_time);
+    v.kind = (basic.attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? kal_node_link
+           : (basic.attributes & FILE_ATTRIBUTE_DIRECTORY)     ? kal_node_directory
+                                                               : kal_node_file;
+    v.writable = (basic.attributes & FILE_ATTRIBUTE_READONLY) ? 0 : 1;
+
+    // ⭐ THE IDENTITY IS TWO WORDS BECAUSE ONE IS NOT ENOUGH, AND THIS
+    // ENVIRONMENT SAYS SO ITSELF: the index it keeps for a file is unique
+    // WITHIN A VOLUME, so two files on two volumes can share one. The volume's
+    // serial number is the other word. Where either enquiry is refused --- a
+    // handle to something that is not on a volume --- the position is left
+    // clear and a caller is told that this is not known, rather than being told
+    // that two different nodes are the same.
+    // ⚠️⚠️ THE VOLUME ENQUIRY REPORTS AN OVERFLOW AND ANSWERS ANYWAY, AND
+    // TREATING THE OVERFLOW AS A FAILURE THREW THE ANSWER AWAY.
+    //
+    // FILE_FS_VOLUME_INFORMATION ends in the volume's LABEL, which is as long
+    // as the label is. A buffer holding the fixed part and one character of it
+    // is enough for every field this reads --- the serial number precedes the
+    // label --- and the object manager still reports STATUS_BUFFER_OVERFLOW,
+    // because the label did not fit. That value is 0x80000005: negative, so
+    // `okw::ok' said no, so the position was left clear.
+    //
+    // ⭐ WHICH IS A CORRECT REPORT OF SOMETHING THAT WAS NOT TRUE. The
+    // implementation was saying "this node's identity is not known here", a
+    // caller was believing it, and the identity was sitting in the buffer. It
+    // surfaced two packages away, in openkal-musl's probe: `two different files
+    // have different identities' did not hold on Windows, because both had been
+    // given the zero this branch leaves behind.
+    //
+    // Room for a label is given so the ordinary case SUCCEEDS, and the overflow
+    // is accepted so the extraordinary one still answers. Both are checked
+    // rather than one, because a label longer than this is a volume nobody
+    // tests with and the buffer would be back to reporting an overflow.
+    struct {
+        okw::file_fs_volume_information info;
+        wchar_t label_tail[128];
+    } volume{};
+    okw::file_internal_information index{};
+    const long ri = okw::NtQueryInformationFile(h, &s, &index, sizeof index,
+                                                okw::file_internal_information_class);
+    const long rv = okw::NtQueryVolumeInformationFile(h, &s, &volume, sizeof volume,
+                                                      okw::fs_volume_information_class);
+    if (okw::ok(ri) && (okw::ok(rv) || rv == okw::status_buffer_overflow)) {
+        v.identity[0] = static_cast<kal_u64>(volume.info.serial_number);
+        v.identity[1] = static_cast<kal_u64>(index.index_number);
+        v.present |= KAL_INFO_IDENTITY;
+    }
+
+    const kal_u32 n = self < sizeof v ? self : (kal_u32)sizeof v;
+    put_bytes(out, &v, n);
     return kal_ok;
+}
+
+void fill_absent(kal_node_info* out) {
+    const kal_u32 self = out->self_size;
+    kal_node_info v{};
+    v.self_size = self;
+    v.present   = KAL_INFO_KIND;
+    v.kind      = kal_node_absent;
+    const kal_u32 n = self < sizeof v ? self : (kal_u32)sizeof v;
+    put_bytes(out, &v, n);
 }
 
 // Enumeration holds a buffer and a handle of its own, obtained by opening the
@@ -171,14 +254,14 @@ extern "C" {
 
 kal_uintptr kal_fs_preopen_count(void) { kal_uintptr n = 0; table(&n); return n; }
 
-int kal_fs_preopen(kal_uintptr index, kal_dir* out, const char** name, kal_uintptr* len) {
+int kal_fs_preopen(kal_uintptr index, kal_dir* out,
+                   char* name_out, kal_uintptr name_cap, kal_uintptr* name_len) {
     kal_uintptr n = 0;
     preopen* t = table(&n);
     if (index >= n || out == nullptr) return kal_err_invalid;
     if (t[index].handle == 0) return kal_err_permission;
     *out = kal_dir{ t[index].handle };
-    if (name) *name = t[index].name;
-    if (len)  *len  = t[index].len;
+    put_name(t[index].name, t[index].len, name_out, name_cap, name_len);
     return kal_ok;
 }
 
@@ -233,14 +316,6 @@ int kal_fs_open(kal_dir base, const char* name, kal_uintptr len,
     return kal_ok;
 }
 
-int kal_fs_open_file(kal_dir base, const char* name, kal_uintptr len,
-                     int write, int create, kal_file* out) {
-    kal_uintptr flags = KAL_OPEN_READ;
-    if (write)  flags |= KAL_OPEN_WRITE;
-    if (create) flags |= KAL_OPEN_WRITE | KAL_OPEN_CREATE | KAL_OPEN_TRUNCATE;
-    return kal_fs_open(base, name, len, flags, out);
-}
-
 void kal_fs_close_dir(kal_dir d) {
     void* h = dir_handle(d);
     if (h) { okw::retire(d.h); okw::NtClose(h); }
@@ -254,10 +329,13 @@ void kal_fs_close_file(kal_file f) {
 // A file's stream is the file. The environment's handle is what openkal.stream
 // holds here, so no conversion is required and none is performed --- which is a
 // property of this implementation rather than of the specification.
-kal_uintptr kal_fs_stream(kal_file f) {
+kal_stream kal_fs_stream(kal_file f) {
     void* h = file_handle(f);
-    return h ? reinterpret_cast<kal_uintptr>(h) : 0u;
+    return kal_stream{ h ? reinterpret_cast<kal_uintptr>(h) : 0u };
 }
+
+// The greatest length of a name this implementation accepts.
+kal_uintptr kal_fs_max_name(void) { return okw::kMaxName - 1; }
 
 int kal_fs_seek(kal_file f, kal_i64 offset, int whence, kal_u64* result) {
     void* h = file_handle(f);
@@ -286,32 +364,40 @@ int kal_fs_truncate(kal_file f, kal_u64 size) {
     return okw::ok(r) ? kal_ok : okw::translate_nt(r);
 }
 
-int kal_fs_info(kal_dir base, const char* name, kal_uintptr len, kal_node_info* out) {
+int kal_fs_info(kal_dir base, const char* name, kal_uintptr len,
+                kal_uintptr flags, kal_u32 wanted, kal_node_info* out) {
     void* root = dir_handle(base);
-    if (!root || out == nullptr || !okw::acceptable(name, len)) return kal_err_invalid;
+    if (!root || !info_ok(out) || !okw::acceptable(name, len)) return kal_err_invalid;
     void* h = nullptr;
+    // RESOLVES BY DEFAULT, SO THAT ASKING AND OPENING ANSWER THE SAME QUESTION.
+    // Without FILE_OPEN_REPARSE_POINT this environment follows the node to what
+    // it finally refers to, which is what `kal_fs_open' does; with it, the node
+    // itself is opened and reported.
+    const unsigned long options = okw::file_open_for_backup_intent
+        | ((flags & KAL_FS_NO_RESOLVE) ? okw::file_open_reparse_point : 0u);
     const long r = open_relative(root, name, len, FILE_READ_ATTRIBUTES,
-                                 okw::file_open, okw::file_open_for_backup_intent, &h);
+                                 okw::file_open, options, &h);
     if (!okw::ok(r)) {
         // Clause 7.7: a name that does not exist is an answer, not a failure. A
         // caller that asks what a name refers to has been answered when told
-        // that it refers to nothing.
+        // that it refers to nothing --- and so is a node whose content names
+        // something absent, when the enquiry resolves.
         const int e = okw::translate_nt(r);
         if (e == kal_err_not_found || e == kal_err_not_directory) {
-            *out = kal_node_info{ 0, 0, kal_node_absent, 0 };
+            fill_absent(out);
             return kal_ok;
         }
         return e;
     }
-    const int e = fill(h, out);
+    const int e = fill(h, wanted, out);
     okw::NtClose(h);
     return e;
 }
 
-int kal_fs_file_info(kal_file f, kal_node_info* out) {
+int kal_fs_file_info(kal_file f, kal_u32 wanted, kal_node_info* out) {
     void* h = file_handle(f);
-    if (!h || out == nullptr) return kal_err_invalid;
-    return fill(h, out);
+    if (!h || !info_ok(out)) return kal_err_invalid;
+    return fill(h, wanted, out);
 }
 
 int kal_fs_set_modified(kal_file f, kal_u64 modified_ns) {
@@ -421,8 +507,9 @@ int kal_fs_list_begin(kal_dir d, kal_uintptr* iter) {
     return kal_ok;
 }
 
-int kal_fs_list_next(kal_dir, kal_uintptr* iter, const char** name,
-                     kal_uintptr* len, int* kind) {
+int kal_fs_list_next(kal_dir, kal_uintptr* iter,
+                     char* name_out, kal_uintptr name_cap,
+                     kal_uintptr* name_len, int* kind) {
     if (iter == nullptr || *iter == 0) return kal_err_invalid;
     auto* s = reinterpret_cast<listing*>(*iter);
 
@@ -438,8 +525,7 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter, const char** name,
                 okw::NtClose(s->handle);
                 kal_free(s, sizeof(listing), alignof(listing));
                 *iter = 0;
-                if (name) *name = nullptr;
-                if (len)  *len  = 0;
+                if (name_len) *name_len = 0;
                 // The end of a directory is reported here as a distinct status
                 // and is the ordinary outcome, not a failure.
                 return (static_cast<unsigned long>(r) == 0x80000006u) ? kal_ok
@@ -462,8 +548,7 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter, const char** name,
         if (chars == 2 && e->file_name[0] == L'.' && e->file_name[1] == L'.') continue;
 
         const okw_uptr n = okw::narrow(e->file_name, chars, s->reported, sizeof s->reported);
-        if (name) *name = s->reported;
-        if (len)  *len  = n;
+        put_name(s->reported, n, name_out, name_cap, name_len);
         if (kind) *kind = (e->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? kal_node_link
                         : (e->file_attributes & FILE_ATTRIBUTE_DIRECTORY)     ? kal_node_directory
                                                                               : kal_node_file;
@@ -471,11 +556,57 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter, const char** name,
     }
 }
 
-// Names on this system are compared without regard to case, and a program that
-// created two names differing only in case would succeed on one implementation
-// and not on this one. The position reports it in advance, which no operation
-// could.
-const kal_uintptr kal_fs_props =
-    KAL_FS_PROP_MODIFIED_TIME | KAL_FS_PROP_ATOMIC_RENAME;
+// The properties of the volume a directory is on.
+//
+// AN ENQUIRY TAKING THE RESOURCE, BECAUSE EVERY POSITION IS A PROPERTY OF THE
+// FORMAT. This environment reports the volume's abilities itself, so nothing is
+// guessed: names on the volume this system is ordinarily installed on are
+// compared without regard to case, and a volume attached to the same machine
+// may be otherwise --- and a word per implementation could state neither.
+kal_uintptr kal_fs_props(kal_dir d) {
+    void* h = dir_handle(d);
+    const kal_uintptr conservative =
+        KAL_FS_PROP_MODIFIED_TIME | KAL_FS_PROP_ATOMIC_RENAME;
+    if (!h) return 0;
+
+    okw::io_status_block s{};
+    struct { okw::file_fs_attribute_information info; wchar_t rest[64]; } a{};
+    const long r = okw::NtQueryVolumeInformationFile(h, &s, &a, sizeof a,
+                                                     okw::fs_attribute_information_class);
+    if (!okw::ok(r)) return conservative;
+
+    kal_uintptr p = conservative;
+    if (a.info.attributes & okw::fs_case_sensitive_search) p |= KAL_FS_PROP_CASE_SENSITIVE;
+
+    // ⚠️ LINKS ARE REPORTED AND ARE NOT MADE, AND THE ASYMMETRY IS THIS
+    // IMPLEMENTATION'S RATHER THAN THE SPECIFICATION'S.
+    //
+    // A volume that supports reparse points holds nodes whose content is
+    // another name, and `kal_fs_info' reports one when it meets it --- so the
+    // position for meeting them is claimed. Creating one on this system
+    // requires a privilege an ordinary program does not hold, or the developer
+    // mode of the system; and reading one requires a control code this
+    // implementation does not yet issue. Neither is claimed, so a caller asks
+    // and is told before it tries, which is what the enquiry is for.
+    if (a.info.attributes & okw::fs_supports_reparse_points) p |= KAL_FS_PROP_LINKS;
+    return p;
+}
+
+// Nodes whose content is another name.
+//
+// Refused, and the enquiry above says so in advance. Creating one on this
+// system requires SeCreateSymbolicLinkPrivilege or the system's developer mode,
+// and reading one requires a file-system control code this implementation does
+// not issue. A caller reads KAL_FS_PROP_MAKE_LINKS --- which is not claimed
+// here --- rather than discovering it by the attempt.
+int kal_fs_link_create(kal_dir, const char*, kal_uintptr,
+                       const char*, kal_uintptr, kal_uintptr) {
+    return kal_err_not_supported;
+}
+
+kal_intptr kal_fs_link_read(kal_dir, const char*, kal_uintptr,
+                            char*, kal_uintptr) {
+    return -kal_err_not_supported;
+}
 
 }

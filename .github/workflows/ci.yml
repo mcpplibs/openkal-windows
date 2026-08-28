@@ -189,8 +189,30 @@ jobs:
           #
           # A check that reads source files must say what they are encoded in, or
           # it reports on the runner's locale.
-          declared = set(re.findall(r'OKW_IMPORT\s+\w+\s+OKW_API\s+(\w+)\s*\(',
-                                    open("src/win32.h", encoding="utf-8").read()))
+          # ⚠️⚠️ EVERY HEADER, AND EVERY SPELLING. THIS CHECK MISSED THE SECOND
+          # OF EACH AND THE DEFECT IT WAS WRITTEN FOR HAPPENED AGAIN.
+          #
+          # It read `src/win32.h' alone and matched `OKW_IMPORT ... OKW_API'
+          # alone. `src/win.h' declares the object manager's entries in the
+          # plain form, `__declspec(dllimport) long __stdcall Nt...', so four of
+          # them were outside what this looked at --- and the failure appeared
+          # exactly where the comment above says it appeared last time, in
+          # openkal-llvm-runtime's cross-build, one repository away:
+          #
+          #     ld.lld: error: undefined symbol:
+          #         __declspec(dllimport) NtQueryVolumeInformationFile
+          #
+          # ⭐ THE CHECK WAS RIGHT AND ITS SCOPE WAS WRONG, which is the harder
+          # kind to notice: it reported a number, the number was of the names it
+          # knew about, and nothing said the set was partial. So the headers are
+          # globbed and both forms are matched.
+          declared = set()
+          headers = sorted(glob.glob("src/*.h"))
+          for h in headers:
+              text = open(h, encoding="utf-8").read()
+              declared |= set(re.findall(r'OKW_IMPORT\s+\w+\s+OKW_API\s+(\w+)\s*\(', text))
+              declared |= set(re.findall(
+                  r'__declspec\(dllimport\)[\w\s\*]*?(\w+)\s*\(', text))
           exported = set()
           for f in glob.glob("port/*.def"):
               body = open(f, encoding="utf-8").read().split("EXPORTS", 1)
@@ -203,10 +225,10 @@ jobs:
               print(f"::error::declared={len(declared)} exported={len(exported)}; nothing was compared")
               sys.exit(1)
           missing = sorted(declared - exported)
-          print(f"  {len(declared)} declared, {len(exported)} exported across "
-                f"{len(glob.glob('port/*.def'))} .def files")
+          print(f"  {len(declared)} declared across {len(headers)} headers, "
+                f"{len(exported)} exported across {len(glob.glob('port/*.def'))} .def files")
           if missing:
-              print("::error::declared in src/win32.h and exported by no .def:")
+              print("::error::declared in src/*.h and exported by no .def:")
               for m in missing: print(f"        {m}")
               sys.exit(1)
           print("  ok  every declared name is exported")
@@ -265,6 +287,40 @@ jobs:
           if git -C .spec rev-parse --verify --quiet "origin/$branch" > /dev/null; then
             git -C .spec checkout --quiet "origin/$branch"
           fi
+
+      # ⚠️⚠️ CLONING THE SPECIFICATION IS NOT THE SAME AS BUILDING AGAINST IT,
+      # AND THIS JOB DID THE FIRST WHILE BELIEVING IT DID THE SECOND.
+      #
+      # `.spec` above is consumed by `run-conformance.sh`, which substitutes the
+      # manifest itself and RESTORES IT ON EXIT --- correctly, since a script
+      # that rewrote a checked-in file and walked away would leave the tree
+      # holding a path. But the steps AFTER it call `mcpp build` directly, and
+      # by then the manifest names `openkal` by version again, so those steps
+      # resolved the PUBLISHED specification:
+      #
+      #     E_NOT_FOUND: package 'compat.openkal@0.9.0' not found in the synced
+      #     index ... the index is current, so this name is either wrong or not
+      #     published yet
+      #
+      # ⭐⭐ THE UNIT IS THE JOB, NOT THE REPOSITORY. Measured 2026-08-28 across
+      # the eight repositories of this ecosystem: seven jobs in three of them
+      # had this shape, and each of those repositories ALSO had a job doing it
+      # correctly --- which is what made the gap invisible to a check done a
+      # repository at a time. These steps are green on `main` and can only be
+      # green there, because there the published version IS the one under test.
+      - name: Point at the specification's working tree
+        run: |
+          set -euo pipefail
+          # ⚠️ NOT `sed -i'. This step runs on macOS and on Windows too, and
+          # BSD sed requires an argument to -i that GNU sed refuses. A temporary
+          # file is the spelling that holds on all three.
+          subst() {   # subst <file> <relative-path-to-the-specification>
+            sed "s|^openkal = .*$|openkal = { path = \"$2\" }|" "$1" > "$1.next"
+            mv "$1.next" "$1"
+            grep -q "path = \"$2\"" "$1" \
+              || { echo "::error::$1 was not substituted"; exit 1; }
+          }
+          subst mcpp.toml .spec
 
       - name: Install wine
         run: |

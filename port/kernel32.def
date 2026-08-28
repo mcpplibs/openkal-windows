@@ -27,6 +27,7 @@ GetLogicalDriveStringsW
 GetProcAddress
 GetProcessHeap
 GetStdHandle
+GetSystemInfo
 GetSystemTimePreciseAsFileTime
 HeapAlloc
 HeapFree

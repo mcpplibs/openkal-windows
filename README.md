@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.8.0"
+openkal = "0.9.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.3.0"
+openkal-windows = "0.4.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was

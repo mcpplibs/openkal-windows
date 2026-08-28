@@ -61,4 +61,24 @@ void kal_free(void* p, kal_uintptr size, kal_uintptr align) {
     HeapFree(h, 0, reinterpret_cast<void**>(p)[-1]);
 }
 
+
+// The quantum this environment allocates and protects memory in.
+//
+// ⭐⭐ THIS SYSTEM HAS TWO, AND THE COARSER IS REPORTED. It protects memory in
+// pages of four kilobytes and RESERVES it in units of sixty-four --- so a value
+// taken from either alone is wrong for the other, and a specification that
+// derived one number from the page size of one family of systems would be wrong
+// here. What the operation promises is that an address and a length that are
+// multiples of the reported value are acceptable to every operation of the
+// interface, so the coarser of the two is the only answer that keeps the
+// promise.
+kal_uintptr kal_memory_granularity(void) {
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const kal_uintptr page  = info.dwPageSize ? info.dwPageSize : 4096u;
+    const kal_uintptr grain = info.dwAllocationGranularity
+                            ? info.dwAllocationGranularity : 65536u;
+    return page > grain ? page : grain;
+}
+
 }

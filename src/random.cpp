@@ -83,6 +83,6 @@ int kal_random_fill(void* out, kal_uintptr len) {
 // Neither blocking nor hardware. The system's generator is seeded before a
 // process runs, so there is no wait to report; and whether the seed came from a
 // hardware source is not something this backend can observe.
-const kal_uintptr kal_random_props = 0;
+kal_uintptr kal_random_props(void) { return 0; }
 
 }  // extern "C"
