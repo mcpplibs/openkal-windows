@@ -17,3 +17,7 @@ compile_commands.json
 # What a system leaves behind.
 .DS_Store
 Thumbs.db
+
+# A working tree of the specification, cloned by continuous integration.
+# No trailing slash: the pattern must match a symbolic link too.
+.spec

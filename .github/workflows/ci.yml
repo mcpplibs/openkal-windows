@@ -266,6 +266,33 @@ jobs:
             git -C .spec checkout --quiet "origin/$branch"
           fi
 
+      # ⚠️⚠️ CLONING THE SPECIFICATION IS NOT THE SAME AS BUILDING AGAINST IT,
+      # AND THIS JOB DID THE FIRST WHILE BELIEVING IT DID THE SECOND.
+      #
+      # `.spec` above is consumed by `run-conformance.sh`, which substitutes the
+      # manifest itself and RESTORES IT ON EXIT --- correctly, since a script
+      # that rewrote a checked-in file and walked away would leave the tree
+      # holding a path. But the steps AFTER it call `mcpp build` directly, and
+      # by then the manifest names `openkal` by version again, so those steps
+      # resolved the PUBLISHED specification:
+      #
+      #     E_NOT_FOUND: package 'compat.openkal@0.9.0' not found in the synced
+      #     index ... the index is current, so this name is either wrong or not
+      #     published yet
+      #
+      # ⭐⭐ THE UNIT IS THE JOB, NOT THE REPOSITORY. Measured 2026-08-28 across
+      # the eight repositories of this ecosystem: seven jobs in three of them
+      # had this shape, and each of those repositories ALSO had a job doing it
+      # correctly --- which is what made the gap invisible to a check done a
+      # repository at a time. These steps are green on `main` and can only be
+      # green there, because there the published version IS the one under test.
+      - name: Point at the specification's working tree
+        run: |
+          set -euo pipefail
+          sed -i 's|^openkal = .*$|openkal = { path = ".spec" }|' mcpp.toml
+          grep -q 'path = ".spec"' mcpp.toml \
+            || { echo "::error::the specification was not substituted"; exit 1; }
+
       - name: Install wine
         run: |
           sudo dpkg --add-architecture i386
