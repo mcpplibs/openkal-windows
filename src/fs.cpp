@@ -173,14 +173,38 @@ int fill(void* h, kal_u32 wanted, kal_node_info* out) {
     // handle to something that is not on a volume --- the position is left
     // clear and a caller is told that this is not known, rather than being told
     // that two different nodes are the same.
+    // ⚠️⚠️ THE VOLUME ENQUIRY REPORTS AN OVERFLOW AND ANSWERS ANYWAY, AND
+    // TREATING THE OVERFLOW AS A FAILURE THREW THE ANSWER AWAY.
+    //
+    // FILE_FS_VOLUME_INFORMATION ends in the volume's LABEL, which is as long
+    // as the label is. A buffer holding the fixed part and one character of it
+    // is enough for every field this reads --- the serial number precedes the
+    // label --- and the object manager still reports STATUS_BUFFER_OVERFLOW,
+    // because the label did not fit. That value is 0x80000005: negative, so
+    // `okw::ok' said no, so the position was left clear.
+    //
+    // ⭐ WHICH IS A CORRECT REPORT OF SOMETHING THAT WAS NOT TRUE. The
+    // implementation was saying "this node's identity is not known here", a
+    // caller was believing it, and the identity was sitting in the buffer. It
+    // surfaced two packages away, in openkal-musl's probe: `two different files
+    // have different identities' did not hold on Windows, because both had been
+    // given the zero this branch leaves behind.
+    //
+    // Room for a label is given so the ordinary case SUCCEEDS, and the overflow
+    // is accepted so the extraordinary one still answers. Both are checked
+    // rather than one, because a label longer than this is a volume nobody
+    // tests with and the buffer would be back to reporting an overflow.
+    struct {
+        okw::file_fs_volume_information info;
+        wchar_t label_tail[128];
+    } volume{};
     okw::file_internal_information index{};
-    okw::file_fs_volume_information volume{};
     const long ri = okw::NtQueryInformationFile(h, &s, &index, sizeof index,
                                                 okw::file_internal_information_class);
     const long rv = okw::NtQueryVolumeInformationFile(h, &s, &volume, sizeof volume,
                                                       okw::fs_volume_information_class);
-    if (okw::ok(ri) && okw::ok(rv)) {
-        v.identity[0] = static_cast<kal_u64>(volume.serial_number);
+    if (okw::ok(ri) && (okw::ok(rv) || rv == okw::status_buffer_overflow)) {
+        v.identity[0] = static_cast<kal_u64>(volume.info.serial_number);
         v.identity[1] = static_cast<kal_u64>(index.index_number);
         v.present |= KAL_INFO_IDENTITY;
     }

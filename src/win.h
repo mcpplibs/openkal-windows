@@ -215,6 +215,15 @@ __declspec(dllimport) unsigned long __stdcall RtlNtStatusToDosError(long status)
 
 inline bool ok(long status) { return status >= 0; }
 
+// ⚠️ AN ENQUIRY THAT REPORTS AN OVERFLOW HAS STILL ANSWERED. STATUS_BUFFER_OVERFLOW
+// is a warning rather than an error: the fixed part of the structure was written
+// and a variable-length tail was cut. `ok' correctly says no to it --- its sign
+// bit is set --- so a caller that reads only fields preceding the tail names it
+// here. Measured: `src/fs.cpp' read a volume serial number that the object
+// manager had written and discarded it, and two files two packages away were
+// reported to have the same identity.
+inline constexpr long status_buffer_overflow = static_cast<long>(0x80000005ul);
+
 // --- translation -------------------------------------------------------------
 //
 // The environment's error values are mapped onto the closed set the
