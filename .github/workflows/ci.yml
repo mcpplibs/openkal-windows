@@ -289,9 +289,16 @@ jobs:
       - name: Point at the specification's working tree
         run: |
           set -euo pipefail
-          sed -i 's|^openkal = .*$|openkal = { path = ".spec" }|' mcpp.toml
-          grep -q 'path = ".spec"' mcpp.toml \
-            || { echo "::error::the specification was not substituted"; exit 1; }
+          # ⚠️ NOT `sed -i'. This step runs on macOS and on Windows too, and
+          # BSD sed requires an argument to -i that GNU sed refuses. A temporary
+          # file is the spelling that holds on all three.
+          subst() {   # subst <file> <relative-path-to-the-specification>
+            sed "s|^openkal = .*$|openkal = { path = \"$2\" }|" "$1" > "$1.next"
+            mv "$1.next" "$1"
+            grep -q "path = \"$2\"" "$1" \
+              || { echo "::error::$1 was not substituted"; exit 1; }
+          }
+          subst mcpp.toml .spec
 
       - name: Install wine
         run: |
