@@ -290,6 +290,28 @@ void kal_process_close(kal_process p) {
 // KAL_PROCESS_PROP_GRANT_DIR is deliberately absent: kal_process_spawn_with
 // refuses a non-empty set of grants here, and a word claiming a facility the
 // next call refuses is the disagreement clause 6.2 exists to prevent.
+// Starting a program whose lifetime is bound to this one's. Version 0.10.
+//
+// ⚠️⚠️ REFUSED HERE, AND NOT BECAUSE THIS SYSTEM CANNOT --- IT CAN. A job object
+// with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE' ends every program in the job when
+// the last handle to it closes, which this system does when a process dies
+// however it dies. That is exactly the binding openkal describes.
+//
+// ⚠️ IT IS NOT CLAIMED IN THIS RELEASE BECAUSE IT HAS NOT BEEN MEASURED HERE.
+// The one consumer that needs it composes `execve', and this system already
+// declines `openkal.space' --- so nothing on this system reaches the operation
+// today, and claiming a binding that has never been exercised is the shape of
+// answer openkal exists to refuse. It is the next thing this implementation
+// should do, and it is recorded as that rather than as an absence.
+//
+// A caller that asks `kal_process_props' first is told before it depends on it.
+int kal_process_spawn_bound(kal_dir, const char*, kal_uintptr,
+                            const char**, const kal_uintptr*, kal_uintptr,
+                            const char**, const kal_uintptr*, kal_uintptr,
+                            const kal_spawn_streams*, kal_process*) {
+    return kal_err_not_supported;
+}
+
 kal_uintptr kal_process_props(void) { return
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
   | KAL_PROCESS_PROP_EXIT_STATUS

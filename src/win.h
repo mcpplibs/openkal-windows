@@ -154,6 +154,17 @@ enum : int {
 enum : int {
     fs_volume_information_class    = 1,
     fs_attribute_information_class = 5,
+    fs_size_information_class      = 3,
+};
+
+// How much the volume holds. The counts are in allocation units and the record
+// says how many bytes one is, which is why capacity is two multiplications and
+// not a field.
+struct file_fs_size_information {
+    okw_i64       total_allocation_units;
+    okw_i64       available_allocation_units;
+    unsigned long sectors_per_unit;
+    unsigned long bytes_per_sector;
 };
 
 // The dispositions NtCreateFile takes. They are the whole of what
@@ -210,6 +221,16 @@ __declspec(dllimport) long __stdcall NtQueryDirectoryFile(void* handle, void* ev
                                     int cls, unsigned char single, unicode_string* pattern,
                                     unsigned char restart);
 __declspec(dllimport) long __stdcall NtFlushBuffersFile(void* handle, io_status_block* status);
+
+// ⭐ EXCLUSION IS PER-HANDLE ON THIS SYSTEM, which is exactly what openkal
+// states: the holder is the `kal_file'. There is no second, process-held form
+// to avoid here --- the thing the other two kernels have to reach past.
+__declspec(dllimport) long __stdcall NtLockFile(void* handle, void* event, void* apc, void* apc_context,
+                            io_status_block* status, okw_i64* offset, okw_i64* length,
+                            unsigned long key, unsigned char fail_immediately,
+                            unsigned char exclusive);
+__declspec(dllimport) long __stdcall NtUnlockFile(void* handle, io_status_block* status,
+                              okw_i64* offset, okw_i64* length, unsigned long key);
 __declspec(dllimport) unsigned long __stdcall RtlNtStatusToDosError(long status);
 }
 

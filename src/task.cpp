@@ -102,6 +102,27 @@ int kal_task_wait(const kal_u32* word, kal_u32 expected,
     }
 }
 
+// How many contexts can run at the same moment. Version 0.10.
+//
+// ⚠️ Added because its absence was a WRONG ANSWER and not a refusal: the
+// property word says whether contexts run at once and not how many can, so a C
+// library above answered 1 with no error and a program sizing a pool of workers
+// got one worker.
+//
+// ⭐ THE ACTIVE MASK AND NOT THE COUNT FIELD. This record carries both, and they
+// differ whenever a program is confined to part of the machine --- which is the
+// case a program sizing itself most needs to get right.
+kal_uintptr kal_task_parallelism(void) {
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    kal_uintptr count = 0;
+    for (unsigned long long bit = info.dwActiveProcessorMask; bit; bit &= bit - 1)
+        ++count;
+    if (count) return count;
+    // Zero is "cannot say", and openkal distinguishes it from one on purpose.
+    return static_cast<kal_uintptr>(info.dwNumberOfProcessors);
+}
+
 int kal_task_wake(const kal_u32* word, kal_uintptr count, kal_uintptr* woken) {
     void* address = const_cast<void*>(static_cast<const void*>(word));
     if (count == 0) { if (woken) *woken = 0; return kal_ok; }
