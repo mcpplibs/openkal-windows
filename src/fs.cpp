@@ -415,6 +415,100 @@ int kal_fs_set_modified(kal_file f, kal_u64 modified_ns) {
     return okw::ok(r) ? kal_ok : okw::translate_nt(r);
 }
 
+// The modification time of a NAME, including a directory. Version 0.10.
+//
+// ⚠️ AND THE OPEN IS NOT `kal_fs_open''S. That one names `FILE_NON_DIRECTORY_FILE'
+// --- correctly, since it opens a FILE --- and a directory is exactly what this
+// declaration exists to reach. Opening for the attribute alone also means a
+// caller need not be able to write the contents to stamp them, which is what
+// `utimensat' means everywhere else.
+int kal_fs_set_modified_at(kal_dir base, const char* name, kal_uintptr len,
+                           kal_u64 modified_ns) {
+    void* root = dir_handle(base);
+    if (!root || !okw::acceptable(name, len)) return kal_err_invalid;
+
+    void* h = nullptr;
+    const long r = open_relative(root, name, len, FILE_WRITE_ATTRIBUTES,
+                                 okw::file_open,
+                                 okw::file_open_for_backup_intent, &h);
+    if (!okw::ok(r)) return okw::translate_nt(r);
+
+    okw::file_basic_information basic{};
+    basic.last_write_time =
+        static_cast<okw_i64>(modified_ns / 100ull + kEpochDifference);
+    okw::io_status_block iosb{};
+    const long w = okw::NtSetInformationFile(h, &iosb, &basic, sizeof basic,
+                                             okw::file_basic_information_class);
+    okw::NtClose(h);
+    return okw::ok(w) ? kal_ok : okw::translate_nt(w);
+}
+
+// --- exclusion upon a range of a file ---------------------------------------
+//
+// ⭐ THIS SYSTEM EXCLUDES PER HANDLE, WHICH IS WHAT openkal STATES. The other
+// two kernels carry an older form held by the PROCESS and have to reach past it;
+// here there is nothing to reach past.
+//
+// ⚠️ AND THIS SYSTEM'S EXCLUSION IS MANDATORY RATHER THAN ADVISORY: a write that
+// crosses a locked range is refused by the system, where elsewhere it is refused
+// only to a program that asked. That is a difference a caller can observe, and
+// it is the environment's own; nothing here can or should simulate the weaker
+// one.
+static int lock_range(kal_file f, kal_u64 start, kal_u64 len,
+                      bool exclusive, bool wait, bool release) {
+    void* h = file_handle(f);
+    if (!h) return kal_err_invalid;
+
+    okw_i64 offset = static_cast<okw_i64>(start);
+    // openkal spells "to the end, however far that comes to be" as zero; this
+    // system has no such spelling and takes a count, so the largest one stands
+    // for it --- which is what every C library on this system does for the same
+    // reason.
+    okw_i64 length = len ? static_cast<okw_i64>(len)
+                         : static_cast<okw_i64>(0x7fffffffffffffffll);
+
+    okw::io_status_block iosb{};
+    const long r = release
+        ? okw::NtUnlockFile(h, &iosb, &offset, &length, 0)
+        : okw::NtLockFile(h, nullptr, nullptr, nullptr, &iosb, &offset, &length,
+                          0, static_cast<unsigned char>(wait ? 0 : 1),
+                          static_cast<unsigned char>(exclusive ? 1 : 0));
+    return okw::ok(r) ? kal_ok : okw::translate_nt(r);
+}
+
+int kal_fs_lock(kal_file f, kal_u64 start, kal_u64 len, kal_uintptr mode) {
+    const bool shared    = (mode & KAL_LOCK_SHARED)    != 0;
+    const bool exclusive = (mode & KAL_LOCK_EXCLUSIVE) != 0;
+    if (shared == exclusive) return kal_err_invalid;
+    return lock_range(f, start, len, exclusive, (mode & KAL_LOCK_WAIT) != 0, false);
+}
+
+int kal_fs_unlock(kal_file f, kal_u64 start, kal_u64 len) {
+    return lock_range(f, start, len, false, false, true);
+}
+
+// How much the volume holds, in bytes.
+//
+// ⚠️ `available' AND NOT `total free'. This system reports the units this
+// CALLER may use, which is the question openkal asks; a quota makes the two
+// differ and the larger of them is not an answer a program can act upon.
+int kal_fs_capacity(kal_dir d, kal_u64* total, kal_u64* available) {
+    void* h = dir_handle(d);
+    if (!h) return kal_err_invalid;
+
+    okw::io_status_block s{};
+    okw::file_fs_size_information info{};
+    const long r = okw::NtQueryVolumeInformationFile(h, &s, &info, sizeof info,
+                                                     okw::fs_size_information_class);
+    if (!okw::ok(r)) return okw::translate_nt(r);
+
+    const kal_u64 unit = static_cast<kal_u64>(info.sectors_per_unit)
+                       * static_cast<kal_u64>(info.bytes_per_sector);
+    if (total)     *total     = static_cast<kal_u64>(info.total_allocation_units) * unit;
+    if (available) *available = static_cast<kal_u64>(info.available_allocation_units) * unit;
+    return kal_ok;
+}
+
 int kal_fs_mkdir(kal_dir base, const char* name, kal_uintptr len) {
     void* root = dir_handle(base);
     if (!root || !okw::acceptable(name, len)) return kal_err_invalid;
@@ -563,10 +657,59 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter,
 // guessed: names on the volume this system is ordinarily installed on are
 // compared without regard to case, and a volume attached to the same machine
 // may be otherwise --- and a word per implementation could state neither.
+// Whether the environment beneath actually performs a lock.
+//
+// ⚠️ ASKED ON A DIRECTORY, WHICH IS NOT A THING THIS SYSTEM LOCKS --- and that is
+// what makes the question answerable without disturbing anything. A system that
+// implements the operation refuses a directory as a wrong request; one that has
+// not implemented it says so with a different value, and that difference is the
+// whole of the enquiry. Nothing is locked either way.
+//
+// Answered once. It is a property of what is beneath this program rather than of
+// a volume, so it does not vary between the directories one program holds.
+static bool locking_available() {
+    static int cached = -1;
+    if (cached >= 0) return cached != 0;
+    const kal_uintptr count = kal_fs_preopen_count();
+    cached = 1;
+    if (count > 0) {
+        kal_dir probe{};
+        char name[8]; kal_uintptr len = 0;
+        if (kal_fs_preopen(0, &probe, name, sizeof name, &len) == kal_ok) {
+            void* h = dir_handle(probe);
+            if (h) {
+                okw::io_status_block iosb{};
+                okw_i64 off = 0, len2 = 1;
+                const long r = okw::NtLockFile(h, nullptr, nullptr, nullptr, &iosb,
+                                               &off, &len2, 0, 1, 1);
+                if (okw::ok(r)) okw::NtUnlockFile(h, &iosb, &off, &len2, 0);
+                else if (r == okw::status_not_implemented) cached = 0;
+            }
+        }
+    }
+    return cached != 0;
+}
+
 kal_uintptr kal_fs_props(kal_dir d) {
     void* h = dir_handle(d);
+    // ⚠️⚠️ LOCKING IS ASKED ABOUT RATHER THAN ASSUMED, AND THE REASON IS NOT
+    // THE VOLUME.
+    //
+    // This system locks a byte range, and the three continuous-integration rows
+    // that run on it measure that it does. A FOURTH row cross-builds and runs
+    // the result under an emulator of this system --- which EXPORTS the call and
+    // answers `STATUS_NOT_IMPLEMENTED' when it is made.
+    //
+    // ⭐ So the property is not a property of the volume here, nor of the
+    // format: it is a property of what is beneath the program at the moment it
+    // asks. A word that claimed the position regardless would be describing the
+    // INTERFACE rather than the environment --- and the whole purpose of a
+    // capability word is that a caller may ask before it calls and be told the
+    // truth about where it is.
+    const kal_uintptr lockable = locking_available() ? KAL_FS_PROP_LOCKS : 0;
     const kal_uintptr conservative =
-        KAL_FS_PROP_MODIFIED_TIME | KAL_FS_PROP_ATOMIC_RENAME;
+        KAL_FS_PROP_MODIFIED_TIME | KAL_FS_PROP_ATOMIC_RENAME
+        | lockable | KAL_FS_PROP_CAPACITY;
     if (!h) return 0;
 
     okw::io_status_block s{};

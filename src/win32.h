@@ -216,6 +216,7 @@ enum : DWORD {
     ERROR_OUTOFMEMORY           = 14,
     ERROR_WRITE_PROTECT         = 19,
     ERROR_SHARING_VIOLATION     = 32,
+    ERROR_LOCK_VIOLATION        = 33,
     ERROR_HANDLE_EOF            = 38,
     ERROR_HANDLE_DISK_FULL      = 39,
     ERROR_NOT_SUPPORTED         = 50,
