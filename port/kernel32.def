@@ -44,6 +44,10 @@ SetHandleInformation
 Sleep
 SwitchToThread
 TerminateProcess
+CreateJobObjectW
+AssignProcessToJobObject
+TerminateJobObject
+SetConsoleCtrlHandler
 VirtualAlloc
 VirtualFree
 VirtualProtect
