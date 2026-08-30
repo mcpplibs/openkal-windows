@@ -264,6 +264,30 @@ int kal_process_spawn(const kal_spawn* how,
     return kal_ok;
 }
 
+// This program itself joins or forms a unit. ⭐ NATURAL HERE TOO, and by the
+// route this environment already offers: a job object is created before it has
+// members, so the caller simply becomes its first one.
+int kal_process_job_enter(kal_job* j) {
+    if (j == nullptr) return kal_err_invalid;
+    HANDLE unit = nullptr;
+    bool made = false;
+    if (j->h != 0) {
+        unit = okw::unpack(j->h);
+        if (!unit) return kal_err_invalid;
+    } else {
+        unit = CreateJobObjectW(nullptr, nullptr);
+        if (!unit) return okw::translate_win32(GetLastError());
+        made = true;
+    }
+    if (!AssignProcessToJobObject(unit, GetCurrentProcess())) {
+        const DWORD why = GetLastError();
+        if (made) CloseHandle(unit);
+        return okw::translate_win32(why);
+    }
+    if (made) j->h = okw::pack(unit);
+    return kal_ok;
+}
+
 // Every program in the unit. A job ends its members as one, which is the whole
 // reason this environment's job object is the right thing to build a unit from.
 int kal_process_job_terminate(kal_job j) {
