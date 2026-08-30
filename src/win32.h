@@ -316,6 +316,11 @@ OKW_IMPORT BOOL   OKW_API TerminateProcess(HANDLE, UINT);
 OKW_IMPORT HANDLE OKW_API CreateJobObjectW(SECURITY_ATTRIBUTES*, LPCWSTR);
 OKW_IMPORT BOOL   OKW_API AssignProcessToJobObject(HANDLE, HANDLE);
 OKW_IMPORT BOOL   OKW_API TerminateJobObject(HANDLE, UINT);
+
+// openkal 0.11: the word set when this program is asked to end. The routine runs
+// on a context this environment starts, which is why the interface is a word and
+// not a disposition --- see kal_process_stop_requested.
+OKW_IMPORT BOOL   OKW_API SetConsoleCtrlHandler(BOOL (OKW_API*)(DWORD), BOOL);
 OKW_IMPORT HANDLE OKW_API GetCurrentProcess(void);
 OKW_IMPORT DWORD  OKW_API WaitForSingleObject(HANDLE, DWORD);
 

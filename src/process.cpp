@@ -264,6 +264,35 @@ int kal_process_spawn(const kal_spawn* how,
     return kal_ok;
 }
 
+// ⭐⭐ A WORD THIS ENVIRONMENT SETS WHEN SOMEBODY HAS ASKED THIS PROGRAM TO END.
+//
+// ⚠️ AND THIS IS WHY THE INTERFACE IS A WORD RATHER THAN A HANDLER. The
+// notification here arrives ON A CONTEXT OF ITS OWN --- the environment starts one
+// to run the routine --- which is nothing like a disposition interrupting whatever
+// was running. An interface shaped like the other system's signals would have
+// had to pretend one was the other; a word both can set needs no pretending.
+//
+// The routine stores and wakes, which is all `kal_task_wait' needs on the other
+// side. Returning false lets the default handling proceed, so a program that
+// never reads the word behaves as it always did.
+namespace {
+kal_u32 g_stop_word = 0;
+int     g_stop_armed = 0;
+
+BOOL OKW_API stop_routine(DWORD) {
+    g_stop_word = 1;
+    WakeByAddressAll(&g_stop_word);
+    return FALSE;
+}
+}  // namespace
+
+// ⚠️ Armed on the first enquiry, so that adding this operation changes nothing
+// for a program that does not use it.
+const kal_u32* kal_process_stop_requested(void) {
+    if (!g_stop_armed) { g_stop_armed = 1; SetConsoleCtrlHandler(stop_routine, TRUE); }
+    return &g_stop_word;
+}
+
 // This program itself joins or forms a unit. ⭐ NATURAL HERE TOO, and by the
 // route this environment already offers: a job object is created before it has
 // members, so the caller simply becomes its first one.
