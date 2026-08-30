@@ -657,11 +657,59 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter,
 // guessed: names on the volume this system is ordinarily installed on are
 // compared without regard to case, and a volume attached to the same machine
 // may be otherwise --- and a word per implementation could state neither.
+// Whether the environment beneath actually performs a lock.
+//
+// ⚠️ ASKED ON A DIRECTORY, WHICH IS NOT A THING THIS SYSTEM LOCKS --- and that is
+// what makes the question answerable without disturbing anything. A system that
+// implements the operation refuses a directory as a wrong request; one that has
+// not implemented it says so with a different value, and that difference is the
+// whole of the enquiry. Nothing is locked either way.
+//
+// Answered once. It is a property of what is beneath this program rather than of
+// a volume, so it does not vary between the directories one program holds.
+static bool locking_available() {
+    static int cached = -1;
+    if (cached >= 0) return cached != 0;
+    const kal_uintptr count = kal_fs_preopen_count();
+    cached = 1;
+    if (count > 0) {
+        kal_dir probe{};
+        char name[8]; kal_uintptr len = 0;
+        if (kal_fs_preopen(0, &probe, name, sizeof name, &len) == kal_ok) {
+            void* h = dir_handle(probe);
+            if (h) {
+                okw::io_status_block iosb{};
+                okw_i64 off = 0, len2 = 1;
+                const long r = okw::NtLockFile(h, nullptr, nullptr, nullptr, &iosb,
+                                               &off, &len2, 0, 1, 1);
+                if (okw::ok(r)) okw::NtUnlockFile(h, &iosb, &off, &len2, 0);
+                else if (r == okw::status_not_implemented) cached = 0;
+            }
+        }
+    }
+    return cached != 0;
+}
+
 kal_uintptr kal_fs_props(kal_dir d) {
     void* h = dir_handle(d);
+    // ⚠️⚠️ LOCKING IS ASKED ABOUT RATHER THAN ASSUMED, AND THE REASON IS NOT
+    // THE VOLUME.
+    //
+    // This system locks a byte range, and the three continuous-integration rows
+    // that run on it measure that it does. A FOURTH row cross-builds and runs
+    // the result under an emulator of this system --- which EXPORTS the call and
+    // answers `STATUS_NOT_IMPLEMENTED' when it is made.
+    //
+    // ⭐ So the property is not a property of the volume here, nor of the
+    // format: it is a property of what is beneath the program at the moment it
+    // asks. A word that claimed the position regardless would be describing the
+    // INTERFACE rather than the environment --- and the whole purpose of a
+    // capability word is that a caller may ask before it calls and be told the
+    // truth about where it is.
+    const kal_uintptr lockable = locking_available() ? KAL_FS_PROP_LOCKS : 0;
     const kal_uintptr conservative =
         KAL_FS_PROP_MODIFIED_TIME | KAL_FS_PROP_ATOMIC_RENAME
-        | KAL_FS_PROP_LOCKS | KAL_FS_PROP_CAPACITY;
+        | lockable | KAL_FS_PROP_CAPACITY;
     if (!h) return 0;
 
     okw::io_status_block s{};

@@ -245,6 +245,13 @@ inline bool ok(long status) { return status >= 0; }
 // reported to have the same identity.
 inline constexpr long status_buffer_overflow = static_cast<long>(0x80000005ul);
 
+// ⚠️ AN ENVIRONMENT MAY EXPORT A NAME AND NOT IMPLEMENT WHAT IT NAMES, and the
+// two are distinguishable only by this value. It is what a capability word has
+// to consult before claiming a position: an operation whose export resolves and
+// whose call answers this cannot be performed here, and a word claiming it would
+// be describing the interface rather than the environment.
+inline constexpr long status_not_implemented = static_cast<long>(0xC0000002ul);
+
 // --- translation -------------------------------------------------------------
 //
 // The environment's error values are mapped onto the closed set the
