@@ -8,10 +8,12 @@ EXPORTS
 NtClose
 NtCreateFile
 NtFlushBuffersFile
+NtLockFile
 NtQueryDirectoryFile
 NtQueryInformationFile
 NtQueryVolumeInformationFile
 NtReadFile
 NtSetInformationFile
+NtUnlockFile
 NtWriteFile
 RtlNtStatusToDosError
