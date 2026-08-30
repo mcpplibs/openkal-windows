@@ -55,6 +55,20 @@ int translate_win32(unsigned long e) {
         case ERROR_ALREADY_EXISTS:          return kal_err_exists;
         case ERROR_DIR_NOT_EMPTY:           return kal_err_not_empty;
         case ERROR_DIRECTORY:               return kal_err_not_directory;
+        // ⚠️⚠️ A LOCK THAT ANOTHER HOLDER HAS IS `AGAIN' AND NOT AN
+        // INPUT-OUTPUT FAILURE, and this line is missing from every earlier
+        // release because nothing here took a lock until openkal 0.10.
+        //
+        // `kal_fs_lock' without KAL_LOCK_WAIT reports kal_err_again where the
+        // range is held, which is the answer a caller POLLS UPON. Falling to
+        // the arm below would have reported kal_err_io --- a failure of the
+        // device rather than a conflict with another holder --- and a caller
+        // reading that would stop rather than retry.
+        //
+        // ⭐ It is distinct from ERROR_SHARING_VIOLATION above, which stays
+        // `permission': that one is a conflict over how a file was OPENED and
+        // is not resolved by asking again.
+        case ERROR_LOCK_VIOLATION:          return kal_err_again;
         case ERROR_IO_PENDING:              return kal_err_again;
         default:                            return kal_err_io;
     }
