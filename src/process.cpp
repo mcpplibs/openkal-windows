@@ -80,21 +80,87 @@ bool append_quoted(wchar_t* out, okw_uptr cap, okw_uptr& at, const wchar_t* s, o
 
 extern "C" {
 
-int kal_process_spawn(kal_dir base,
+// Starting a program. One function since openkal 0.11.
+//
+// ⚠️ TWO POSITIONS IN `kal_spawn' ARE REFUSED HERE, AND EACH REFUSAL
+// IS OLDER THAN 0.11 --- the record moved, the answers did not.
+//
+// `grants': this environment has no numbering a preopen could arrive under, so
+// there is no correspondence to descriptor three. KAL_PROCESS_PROP_GRANT_DIR is
+// not claimed. A count of zero asks for a program with no preopens, which is
+// what a program here gets anyway, so that request IS answerable and is
+// answered.
+//
+// `KAL_SPAWN_BOUND_LIFETIME': no primitive arms it from inside the started image.
+//
+// ⭐⭐ AND THE UNIT IS IMPLEMENTED HERE, WHICH AN EARLIER SHAPE OF IT WAS NOT.
+//
+// 0.11 first spelled this as a flag: make the started program a unit, and let
+// `kal_process_terminate' reach the unit afterwards. That shape could not be
+// satisfied here. This system can FORM the unit --- a job object is exactly it ---
+// but it cannot RECOVER one from a process handle, and `kal_process' is one word
+// already holding the process. The other two implementations needed no storage
+// because `getpgid(pid) == pid' recovers it from the kernel; this one would have
+// needed a registry.
+//
+// ⚠️ Clause 7.1 states mechanically what needing a registry means: the
+// specification "has taken a shape borrowed from one environment, and THE SHAPE
+// IS AT FAULT rather than the implementation". handle.h says the same one level
+// down --- its array "holds generations and nothing else", and a lookup deciding
+// what a word referred to "would be a defect here".
+//
+// ⇒ So the shape changed rather than this file acquiring a table. The unit is now
+// a handle the CALLER holds, whose identity is established at the first start, and
+// both kinds of system perform that without remembering anything: here a job
+// object is created and its handle reported; where the unit is a process group
+// the first member's identifier is reported instead.
+//
+// ⚠️ JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE IS DELIBERATELY NOT SET. It would make
+// `kal_process_job_close' end every member --- and closing means only releasing
+// where the unit is a number, so one operation would mean two things. Ending is
+// `kal_process_job_terminate' and nothing else is.
+int kal_process_spawn(const kal_spawn* how,
                       const char* path, kal_uintptr path_len,
                       const char** argv, const kal_uintptr* argv_lens, kal_uintptr argc,
                       const char** envp, const kal_uintptr* envp_lens, kal_uintptr envc,
                       const kal_spawn_streams* streams,
                       kal_process* out) {
-    void* dir = okw::unpack(base.h);
-    if (!dir || out == nullptr) return kal_err_invalid;
+    if (how == nullptr || out == nullptr) return kal_err_invalid;
+    void* dir = okw::unpack(how->base.h);
+    void* run = okw::unpack(how->work.h);
+    if (!dir || !run) return kal_err_invalid;
     if (!okw::acceptable(path, path_len)) return kal_err_invalid;
+    if (how->grant_count > 0) return kal_err_not_supported;
+    if (how->flags != 0)      return kal_err_not_supported;
+
+    // The unit, created before its first member and reported to the caller. A
+    // later member is assigned to the one the caller already holds.
+    HANDLE unit = nullptr;
+    bool   unit_is_new = false;
+    if (how->job) {
+        if (how->job->h != 0) {
+            unit = okw::unpack(how->job->h);
+            if (!unit) return kal_err_invalid;
+        } else {
+            unit = CreateJobObjectW(nullptr, nullptr);
+            if (!unit) return okw::translate_win32(GetLastError());
+            unit_is_new = true;
+        }
+    }
+    struct unit_guard {
+        HANDLE h; bool own;
+        ~unit_guard() { if (own && h) CloseHandle(h); }
+    } ug{ unit, unit_is_new };
 
     // The directory's own name, and the program's beneath it.
     // Obtained rather than kept in static storage: static storage shared
     // between execution contexts would make two concurrent spawns one.
     struct scratch {
         wchar_t image[okw::kMaxName];
+        // ⭐ THE DIRECTORY THE PROGRAM RUNS IN, WHICH IS NOT THE ONE IT IS NAMED
+        // FROM. `CreateProcessW' has taken a current directory all along; what
+        // was missing until 0.11 was a caller able to say which.
+        wchar_t cwd[okw::kMaxName];
         wchar_t line[kCommandLine];
         wchar_t block[kCommandLine];
     };
@@ -117,6 +183,13 @@ int kal_process_spawn(kal_dir base,
         image[at++] = relative.buffer[i];
     }
     image[at] = 0;
+
+    // The same enquiry the image path comes from, upon the other directory.
+    wchar_t* cwd = work->cwd;
+    const DWORD cn = GetFinalPathNameByHandleW(run, cwd, okw::kMaxName - 1,
+                                               FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (cn == 0 || cn >= okw::kMaxName - 1) return okw::translate_win32(GetLastError());
+    cwd[cn] = 0;
 
     // The vector, unaltered, including its first element.
     wchar_t* line = work->line;
@@ -170,11 +243,94 @@ int kal_process_spawn(kal_dir base,
     const BOOL started = CreateProcessW(image, argc ? line : nullptr, nullptr, nullptr,
                                         inherit ? TRUE : FALSE,
                                         CREATE_UNICODE_ENVIRONMENT,
-                                        envc ? block : nullptr, nullptr, &startup, &info);
+                                        envc ? block : nullptr, cwd, &startup, &info);
     if (!started) return okw::translate_win32(GetLastError());
     CloseHandle(info.hThread);
+
+    // ⚠️ ASSIGNED BEFORE THE CALLER IS TOLD ANYTHING. A program that could not be
+    // put into the unit is not the program that was asked for --- it would outlive
+    // a termination of the unit --- so it is ended rather than handed back.
+    if (unit && !AssignProcessToJobObject(unit, info.hProcess)) {
+        const DWORD why = GetLastError();
+        TerminateProcess(info.hProcess, 127);
+        CloseHandle(info.hProcess);
+        return okw::translate_win32(why);
+    }
+
+    // The caller's word, written only now, and only for a unit this start made.
+    if (unit_is_new) { how->job->h = okw::pack(unit); ug.own = false; }
+
     *out = kal_process{ okw::pack(info.hProcess) };
     return kal_ok;
+}
+
+// ⭐⭐ A WORD THIS ENVIRONMENT SETS WHEN SOMEBODY HAS ASKED THIS PROGRAM TO END.
+//
+// ⚠️ AND THIS IS WHY THE INTERFACE IS A WORD RATHER THAN A HANDLER. The
+// notification here arrives ON A CONTEXT OF ITS OWN --- the environment starts one
+// to run the routine --- which is nothing like a disposition interrupting whatever
+// was running. An interface shaped like the other system's signals would have
+// had to pretend one was the other; a word both can set needs no pretending.
+//
+// The routine stores and wakes, which is all `kal_task_wait' needs on the other
+// side. Returning false lets the default handling proceed, so a program that
+// never reads the word behaves as it always did.
+namespace {
+kal_u32 g_stop_word = 0;
+int     g_stop_armed = 0;
+
+BOOL OKW_API stop_routine(DWORD) {
+    g_stop_word = 1;
+    WakeByAddressAll(&g_stop_word);
+    return FALSE;
+}
+}  // namespace
+
+// ⚠️ Armed on the first enquiry, so that adding this operation changes nothing
+// for a program that does not use it.
+const kal_u32* kal_process_stop_requested(void) {
+    if (!g_stop_armed) { g_stop_armed = 1; SetConsoleCtrlHandler(stop_routine, TRUE); }
+    return &g_stop_word;
+}
+
+// This program itself joins or forms a unit. ⭐ NATURAL HERE TOO, and by the
+// route this environment already offers: a job object is created before it has
+// members, so the caller simply becomes its first one.
+int kal_process_job_enter(kal_job* j) {
+    if (j == nullptr) return kal_err_invalid;
+    HANDLE unit = nullptr;
+    bool made = false;
+    if (j->h != 0) {
+        unit = okw::unpack(j->h);
+        if (!unit) return kal_err_invalid;
+    } else {
+        unit = CreateJobObjectW(nullptr, nullptr);
+        if (!unit) return okw::translate_win32(GetLastError());
+        made = true;
+    }
+    if (!AssignProcessToJobObject(unit, GetCurrentProcess())) {
+        const DWORD why = GetLastError();
+        if (made) CloseHandle(unit);
+        return okw::translate_win32(why);
+    }
+    if (made) j->h = okw::pack(unit);
+    return kal_ok;
+}
+
+// Every program in the unit. A job ends its members as one, which is the whole
+// reason this environment's job object is the right thing to build a unit from.
+int kal_process_job_terminate(kal_job j) {
+    HANDLE h = okw::unpack(j.h);
+    if (!h) return kal_err_invalid;
+    if (!TerminateJobObject(h, 15)) return okw::translate_win32(GetLastError());
+    return kal_ok;
+}
+
+// ⚠️ RELEASES AND DOES NOT END. The limit that would have ended the members on
+// the last close is deliberately not set --- see the note above kal_process_spawn.
+void kal_process_job_close(kal_job j) {
+    HANDLE h = okw::unpack(j.h);
+    if (h) { okw::retire(j.h); CloseHandle(h); }
 }
 
 // A channel: a pair of streams of which one end is meant to cross a spawn.
@@ -221,36 +377,6 @@ void kal_process_channel_close(kal_stream s) {
     CloseHandle(h);
 }
 
-// Starting a program that receives exactly the directories named.
-//
-// ⚠️ NOT PROVIDED, AND THE REFUSAL IS THE HONEST ANSWER RATHER THAN A GAP. A
-// preopened directory is a handle a started program reads back through
-// kal_fs_preopen by NUMBER, and this environment has no numbering: a handle
-// crosses a spawn by being inheritable, and the started program learns of it
-// through a mechanism the parent has to arrange itself. There is no
-// correspondence here to descriptor three.
-//
-// Clause 6.2 is what makes the refusal conforming rather than a deviation: the
-// operation exists, reports kal_err_not_supported, and the property word does
-// not claim KAL_PROCESS_PROP_GRANT_DIR. A caller therefore learns from the word
-// what it would otherwise learn from a failed call.
-int kal_process_spawn_with(kal_dir base,
-                           const char* path, kal_uintptr path_len,
-                           const char** argv, const kal_uintptr* argv_lens, kal_uintptr argc,
-                           const char** envp, const kal_uintptr* envp_lens, kal_uintptr envc,
-                           const kal_spawn_streams* streams,
-                           const kal_preopen* grants, kal_uintptr grant_count,
-                           kal_process* out) {
-    // A count of zero asks for a program with no preopens, which this
-    // environment gives a started program anyway --- it has none to pass. That
-    // request is therefore answerable, and is answered by the ordinary spawn.
-    if (grant_count == 0)
-        return kal_process_spawn(base, path, path_len,
-                                 argv, argv_lens, argc,
-                                 envp, envp_lens, envc, streams, out);
-    (void)grants;
-    return kal_err_not_supported;
-}
 
 int kal_process_wait(kal_process p, int* status, int* terminated) {
     void* h = okw::unpack(p.h);
@@ -287,34 +413,17 @@ void kal_process_close(kal_process p) {
     if (h) { okw::retire(p.h); CloseHandle(h); }
 }
 
-// KAL_PROCESS_PROP_GRANT_DIR is deliberately absent: kal_process_spawn_with
-// refuses a non-empty set of grants here, and a word claiming a facility the
-// next call refuses is the disagreement clause 6.2 exists to prevent.
-// Starting a program whose lifetime is bound to this one's. Version 0.10.
+// ⚠️ THREE POSITIONS ARE DELIBERATELY ABSENT, AND EACH IS ABSENT BECAUSE THE
+// NEXT CALL REFUSES IT. A word claiming a facility the operation then declines is
+// the disagreement clause 6.2 exists to prevent, so the two are written together
+// and read together:
 //
-// ⚠️⚠️ REFUSED HERE, AND NOT BECAUSE THIS SYSTEM CANNOT --- IT CAN. A job object
-// with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE' ends every program in the job when
-// the last handle to it closes, which this system does when a process dies
-// however it dies. That is exactly the binding openkal describes.
-//
-// ⚠️ IT IS NOT CLAIMED IN THIS RELEASE BECAUSE IT HAS NOT BEEN MEASURED HERE.
-// The one consumer that needs it composes `execve', and this system already
-// declines `openkal.space' --- so nothing on this system reaches the operation
-// today, and claiming a binding that has never been exercised is the shape of
-// answer openkal exists to refuse. It is the next thing this implementation
-// should do, and it is recorded as that rather than as an absence.
-//
-// A caller that asks `kal_process_props' first is told before it depends on it.
-int kal_process_spawn_bound(kal_dir, const char*, kal_uintptr,
-                            const char**, const kal_uintptr*, kal_uintptr,
-                            const char**, const kal_uintptr*, kal_uintptr,
-                            const kal_spawn_streams*, kal_process*) {
-    return kal_err_not_supported;
-}
-
+//   GRANT_DIR       kal_process_spawn refuses a non-empty `grants'
+//   BOUND_LIFETIME  no primitive arms it from inside the started image
 kal_uintptr kal_process_props(void) { return
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
   | KAL_PROCESS_PROP_EXIT_STATUS
-  | KAL_PROCESS_PROP_CHANNEL; }
+  | KAL_PROCESS_PROP_CHANNEL
+  | KAL_PROCESS_PROP_JOB; }
 
 }

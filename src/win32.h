@@ -304,6 +304,23 @@ OKW_IMPORT BOOL   OKW_API CreateProcessW(LPCWSTR, LPWSTR, SECURITY_ATTRIBUTES*,
                               LPCWSTR, STARTUPINFOW*, PROCESS_INFORMATION*);
 OKW_IMPORT BOOL   OKW_API GetExitCodeProcess(HANDLE, DWORD*);
 OKW_IMPORT BOOL   OKW_API TerminateProcess(HANDLE, UINT);
+
+// openkal 0.11: the unit a set of started programs forms. A job object ends its
+// members as one, which is what `kal_process_job_terminate' is.
+//
+// ⚠️ NO `SetInformationJobObject' HERE, AND ITS ABSENCE IS THE DESIGN. The limit
+// that ends members when the last handle closes --- JOB_OBJECT_LIMIT_KILL_ON_JOB_
+// CLOSE --- is exactly what must NOT be set: `kal_process_job_close' releases and
+// does not end, because where a unit is a process group closing is releasing a
+// number. Not declaring the call is how that stays true by construction.
+OKW_IMPORT HANDLE OKW_API CreateJobObjectW(SECURITY_ATTRIBUTES*, LPCWSTR);
+OKW_IMPORT BOOL   OKW_API AssignProcessToJobObject(HANDLE, HANDLE);
+OKW_IMPORT BOOL   OKW_API TerminateJobObject(HANDLE, UINT);
+
+// openkal 0.11: the word set when this program is asked to end. The routine runs
+// on a context this environment starts, which is why the interface is a word and
+// not a disposition --- see kal_process_stop_requested.
+OKW_IMPORT BOOL   OKW_API SetConsoleCtrlHandler(BOOL (OKW_API*)(DWORD), BOOL);
 OKW_IMPORT HANDLE OKW_API GetCurrentProcess(void);
 OKW_IMPORT DWORD  OKW_API WaitForSingleObject(HANDLE, DWORD);
 
