@@ -82,7 +82,7 @@ extern "C" {
 
 // Starting a program. One function since openkal 0.11.
 //
-// ⚠️ TWO OF THE FIVE POSITIONS IN `kal_spawn' ARE REFUSED HERE, AND EACH REFUSAL
+// ⚠️ TWO POSITIONS IN `kal_spawn' ARE REFUSED HERE, AND EACH REFUSAL
 // IS OLDER THAN 0.11 --- the record moved, the answers did not.
 //
 // `grants': this environment has no numbering a preopen could arrive under, so
@@ -93,19 +93,32 @@ extern "C" {
 //
 // `KAL_SPAWN_BOUND_LIFETIME': no primitive arms it from inside the started image.
 //
-// ⚠️⚠️ `KAL_SPAWN_OWN_JOB' IS REFUSED, AND NOT BECAUSE THIS SYSTEM CANNOT DO IT ---
-// a job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE is exactly the unit the
-// flag describes, and this is the environment the idea comes from. What is
-// missing is somewhere to keep the job: `kal_process' is one machine word and it
-// holds the process handle, so `kal_process_terminate' would have no way to
-// reach the job later. The other two implementations need no such storage
-// because `getpgid(pid) == pid' recovers the fact from the kernel.
+// ⭐⭐ AND THE UNIT IS IMPLEMENTED HERE, WHICH AN EARLIER SHAPE OF IT WAS NOT.
 //
-// ⇒ Claiming it would mean a side table keyed by process handle, and a side
-// table that is wrong under concurrency terminates the wrong tree. Refused
-// until it can be done without one, which is a smaller lie than "kills
-// sometimes". Clause 6.2: the position is not claimed and a caller that asks
-// first is told.
+// 0.11 first spelled this as a flag: make the started program a unit, and let
+// `kal_process_terminate' reach the unit afterwards. That shape could not be
+// satisfied here. This system can FORM the unit --- a job object is exactly it ---
+// but it cannot RECOVER one from a process handle, and `kal_process' is one word
+// already holding the process. The other two implementations needed no storage
+// because `getpgid(pid) == pid' recovers it from the kernel; this one would have
+// needed a registry.
+//
+// ⚠️ Clause 7.1 states mechanically what needing a registry means: the
+// specification "has taken a shape borrowed from one environment, and THE SHAPE
+// IS AT FAULT rather than the implementation". handle.h says the same one level
+// down --- its array "holds generations and nothing else", and a lookup deciding
+// what a word referred to "would be a defect here".
+//
+// ⇒ So the shape changed rather than this file acquiring a table. The unit is now
+// a handle the CALLER holds, whose identity is established at the first start, and
+// both kinds of system perform that without remembering anything: here a job
+// object is created and its handle reported; where the unit is a process group
+// the first member's identifier is reported instead.
+//
+// ⚠️ JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE IS DELIBERATELY NOT SET. It would make
+// `kal_process_job_close' end every member --- and closing means only releasing
+// where the unit is a number, so one operation would mean two things. Ending is
+// `kal_process_job_terminate' and nothing else is.
 int kal_process_spawn(const kal_spawn* how,
                       const char* path, kal_uintptr path_len,
                       const char** argv, const kal_uintptr* argv_lens, kal_uintptr argc,
@@ -119,6 +132,25 @@ int kal_process_spawn(const kal_spawn* how,
     if (!okw::acceptable(path, path_len)) return kal_err_invalid;
     if (how->grant_count > 0) return kal_err_not_supported;
     if (how->flags != 0)      return kal_err_not_supported;
+
+    // The unit, created before its first member and reported to the caller. A
+    // later member is assigned to the one the caller already holds.
+    HANDLE unit = nullptr;
+    bool   unit_is_new = false;
+    if (how->job) {
+        if (how->job->h != 0) {
+            unit = okw::unpack(how->job->h);
+            if (!unit) return kal_err_invalid;
+        } else {
+            unit = CreateJobObjectW(nullptr, nullptr);
+            if (!unit) return okw::translate_win32(GetLastError());
+            unit_is_new = true;
+        }
+    }
+    struct unit_guard {
+        HANDLE h; bool own;
+        ~unit_guard() { if (own && h) CloseHandle(h); }
+    } ug{ unit, unit_is_new };
 
     // The directory's own name, and the program's beneath it.
     // Obtained rather than kept in static storage: static storage shared
@@ -214,8 +246,38 @@ int kal_process_spawn(const kal_spawn* how,
                                         envc ? block : nullptr, cwd, &startup, &info);
     if (!started) return okw::translate_win32(GetLastError());
     CloseHandle(info.hThread);
+
+    // ⚠️ ASSIGNED BEFORE THE CALLER IS TOLD ANYTHING. A program that could not be
+    // put into the unit is not the program that was asked for --- it would outlive
+    // a termination of the unit --- so it is ended rather than handed back.
+    if (unit && !AssignProcessToJobObject(unit, info.hProcess)) {
+        const DWORD why = GetLastError();
+        TerminateProcess(info.hProcess, 127);
+        CloseHandle(info.hProcess);
+        return okw::translate_win32(why);
+    }
+
+    // The caller's word, written only now, and only for a unit this start made.
+    if (unit_is_new) { how->job->h = okw::pack(unit); ug.own = false; }
+
     *out = kal_process{ okw::pack(info.hProcess) };
     return kal_ok;
+}
+
+// Every program in the unit. A job ends its members as one, which is the whole
+// reason this environment's job object is the right thing to build a unit from.
+int kal_process_job_terminate(kal_job j) {
+    HANDLE h = okw::unpack(j.h);
+    if (!h) return kal_err_invalid;
+    if (!TerminateJobObject(h, 15)) return okw::translate_win32(GetLastError());
+    return kal_ok;
+}
+
+// ⚠️ RELEASES AND DOES NOT END. The limit that would have ended the members on
+// the last close is deliberately not set --- see the note above kal_process_spawn.
+void kal_process_job_close(kal_job j) {
+    HANDLE h = okw::unpack(j.h);
+    if (h) { okw::retire(j.h); CloseHandle(h); }
 }
 
 // A channel: a pair of streams of which one end is meant to cross a spawn.
@@ -305,11 +367,10 @@ void kal_process_close(kal_process p) {
 //
 //   GRANT_DIR       kal_process_spawn refuses a non-empty `grants'
 //   BOUND_LIFETIME  no primitive arms it from inside the started image
-//   OWN_JOB         the job exists; somewhere to keep its handle does not ---
-//                   see the note above kal_process_spawn
 kal_uintptr kal_process_props(void) { return
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
   | KAL_PROCESS_PROP_EXIT_STATUS
-  | KAL_PROCESS_PROP_CHANNEL; }
+  | KAL_PROCESS_PROP_CHANNEL
+  | KAL_PROCESS_PROP_JOB; }
 
 }
