@@ -112,14 +112,15 @@ wide_name::wide_name(const char* utf8, okw_uptr len) : ok(false) {
     ok = true;
 }
 
-okw_uptr narrow(const wchar_t* wide, okw_uptr wide_len, char* out, okw_uptr cap) {
+okw_uptr narrow(const wchar_t* wide, okw_uptr wide_len, char* out, okw_uptr cap, bool names) {
     if (wide_len == 0 || cap == 0) { if (cap) out[0] = 0; return 0; }
     const int produced = WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(wide_len),
                                              out, static_cast<int>(cap - 1), nullptr, nullptr);
     if (produced <= 0) { out[0] = 0; return 0; }
     // Reported the way openkal spells it, which is the reverse of the
     // substitution above and is the only place the difference appears.
-    for (int i = 0; i < produced; ++i) if (out[i] == '\\') out[i] = '/';
+    if (names)
+        for (int i = 0; i < produced; ++i) if (out[i] == '\\') out[i] = '/';
     out[produced] = 0;
     return static_cast<okw_uptr>(produced);
 }
