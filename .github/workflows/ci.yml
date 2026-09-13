@@ -433,9 +433,15 @@ jobs:
       # may supply a C runtime of its own; an implementation that reached for
       # this environment's would have its calls resolve to the program's, and
       # the program's would resolve back here.
+      #
+      # ⚠️ IN BOTH PROFILES. An optimizing compiler turns loops into calls ---
+      # a counting loop into `strlen` or `wcslen` --- so objects built without
+      # optimization can hold the property while the ones a release links do not.
       - name: The objects reference no C runtime symbol
         run: |
-          rm -rf target && mcpp build --features standalone --target x86_64-windows-gnu
+          for profile in dev release; do
+          echo "--- profile $profile"
+          rm -rf target && mcpp build --features standalone --target x86_64-windows-gnu --profile "$profile"
           objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o')"
           test -n "$objs" || { echo "no objects were found; the check would pass vacuously" >&2; exit 1; }
 
@@ -465,7 +471,8 @@ jobs:
             }
           done
           test "$bad" -eq 0
-          echo "the implementation references no C runtime symbol"
+          echo "the implementation references no C runtime symbol ($profile)"
+          done
 
       # A checker is only useful if it fails when it should.
       - name: The independence check detects a dependence

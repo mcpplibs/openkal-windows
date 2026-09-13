@@ -1,7 +1,7 @@
 [package]
 namespace   = "mcpplibs"
 name        = "openkal-windows"
-version     = "0.7.0"
+version     = "0.7.1"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
 
@@ -65,7 +65,19 @@ ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt"
 # ABI has a C runtime; there the toolchain's defaults are correct, one of the two
 # toolchains that reach it would not recognise these spellings, and openkal has
 # nothing to say about how a program that has a runtime unwinds.
-cxxflags = ["-fno-exceptions", "-fno-rtti"]
+#
+# ⚠️ AND NO LOOP IS REPLACED BY A CALL, WHICH IS WHAT `-fno-builtin` IS FOR.
+#
+# An optimizing compiler recognises a loop that counts to a terminator and
+# emits a call to the library function that does the same. `wide_length` in
+# src/env.cpp counts sixteen-bit units and became `wcslen`; a byte loop in
+# src/win.cpp became `strlen`. Neither is this environment's: the C library
+# above is openkal-musl, whose `wchar_t` is thirty-two bits, so its `wcslen`
+# read the command line two units at a time and every argument of a program
+# built with `--release` came out shortened by a different amount. The dev
+# profile does not optimize and never showed it, which is also why the check
+# below now builds both profiles.
+cxxflags = ["-fno-exceptions", "-fno-rtti", "-fno-builtin"]
 
 # The other ABI names them in the sources instead --- src/win.cpp for the four
 # above and src/random.cpp for bcrypt --- where its compilers record
