@@ -277,7 +277,10 @@ struct wide_name {
 };
 
 // The reverse, for reporting a name this environment produced.
-okw_uptr narrow(const wchar_t* wide, okw_uptr wide_len, char* out, okw_uptr cap);
+// `names' substitutes openkal's separator for this environment's, which is right
+// for a name and wrong for an argument: an argument is not a name, and clause
+// 7.6 requires it to arrive as it was given.
+okw_uptr narrow(const wchar_t* wide, okw_uptr wide_len, char* out, okw_uptr cap, bool names = true);
 
 // A name is a single component or a sequence separated by a forward slash. It
 // shall not begin with a separator and shall not contain a component that

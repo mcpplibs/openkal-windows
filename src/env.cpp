@@ -33,10 +33,10 @@ int         g_varc = 0;
 
 bool        g_ready = false;
 
-const char* store(const wchar_t* w, int wlen, okw_uptr& out_len) {
+const char* store(const wchar_t* w, int wlen, okw_uptr& out_len, bool names) {
     if (g_used + 4 >= kText) { out_len = 0; return ""; }
     char* at = g_text + g_used;
-    const okw_uptr n = okw::narrow(w, static_cast<okw_uptr>(wlen), at, kText - g_used);
+    const okw_uptr n = okw::narrow(w, static_cast<okw_uptr>(wlen), at, kText - g_used, names);
     g_used += n + 1;
     out_len = n;
     return at;
@@ -53,7 +53,10 @@ void prepare() {
     if (parts) {
         for (int i = 0; i < count && g_argc < kMaxArgs - 1; ++i) {
             okw_uptr len = 0;
-            g_argv[g_argc] = store(parts[i], wide_length(parts[i]), len);
+            // ⚠️ AS GIVEN, AND UNTIL 0.7.3 EVERY BACKSLASH CAME OUT AS A SLASH.
+            // An argument is not a name: `C:\dir' and a pattern's `\d' are what
+            // the caller wrote, and clause 7.6 requires the vector unaltered.
+            g_argv[g_argc] = store(parts[i], wide_length(parts[i]), len, false);
             g_argv_len[g_argc] = len;
             ++g_argc;
         }
@@ -74,7 +77,7 @@ void prepare() {
             // bookkeeping and is not a variable a program set.
             if (p[0] != L'=') {
                 okw_uptr total = 0;
-                const char* entry = store(p, len, total);
+                const char* entry = store(p, len, total, true);
                 okw_uptr split = 0;
                 while (split < total && entry[split] != '=') ++split;
                 g_entry[g_varc]     = entry;

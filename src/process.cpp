@@ -22,6 +22,35 @@ namespace {
 
 constexpr okw_uptr kCommandLine = 32768;   // this environment's own bound
 
+// ⚠️ THE NAMES A STARTED PROGRAM IS GIVEN, IN THE FORM EVERY PROGRAM READS.
+//
+// GetFinalPathNameByHandleW answers with the `\\?\' prefix, which tells this
+// system to take the rest verbatim. CreateProcessW accepts it, and the started
+// program inherits it as its current directory --- where the command interpreter
+// refuses it ("UNC paths are not supported") and runs in the Windows directory
+// instead. A batch file, which is how many tools are installed on this system,
+// therefore ran somewhere other than where it was started. So the prefix is
+// removed wherever the name means the same without it: a drive path within the
+// classic bound, and a network share in its `\\server\share' form. A longer name
+// keeps the prefix, because without it the name would not be accepted at all.
+okw_uptr plain_name(wchar_t* s, okw_uptr n) {
+    // MAX_PATH, less the separator and the terminator a current directory takes.
+    constexpr okw_uptr kClassic = 258;
+    const bool verbatim = n >= 4 && s[0] == L'\\' && s[1] == L'\\' && s[2] == L'?' && s[3] == L'\\';
+    if (!verbatim) return n;
+    const bool drive = n >= 7 && ((s[4] >= L'A' && s[4] <= L'Z') || (s[4] >= L'a' && s[4] <= L'z'))
+                       && s[5] == L':' && s[6] == L'\\';
+    const bool share = n >= 8 && (s[4] == L'U' || s[4] == L'u') && (s[5] == L'N' || s[5] == L'n')
+                       && (s[6] == L'C' || s[6] == L'c') && s[7] == L'\\';
+    okw_uptr drop = 0;
+    if (drive && n - 4 <= kClassic)      drop = 4;   // \\?\C:\dir      -> C:\dir
+    else if (share && n - 6 <= kClassic) drop = 6;   // \\?\UNC\host\x  -> \\host\x
+    if (drop == 0) return n;
+    for (okw_uptr i = drop; i <= n; ++i) s[i - drop] = s[i];   // the terminator too
+    if (drop == 6) s[0] = L'\\';
+    return n - drop;
+}
+
 // ⚠️ THE HANDLES A START PLACES ARE INHERITABLE FOR THE LENGTH OF THE START AND NO
 // LONGER, AND ONE START AT A TIME DOES THIS.
 //
@@ -100,24 +129,35 @@ bool append_utf8(wchar_t* out, okw_uptr cap, okw_uptr& at, const char* s, okw_up
     return true;
 }
 
+// ⚠️⚠️ UNTIL 0.7.3 EVERY SEPARATOR WAS DROPPED, AND EVERY ELEMENT WAS QUOTED.
+//
+// A run of backslashes was counted and never written, so `C:\dir\file' arrived as
+// `C:dirfile' and a trailing one ended the quoting early and joined the elements
+// after it. And an element that needs no quoting was quoted anyway, which the
+// splitting accepts and the command interpreter does not: it reads `"/c"' as a
+// command rather than as its switch, and a batch file --- run through the
+// interpreter --- received a line it called incorrect. Now an element is written
+// as it is unless the splitting would alter it, and otherwise quoted by the rule
+// the splitting inverts: backslashes before a quote are doubled and the quote
+// escaped, backslashes before the closing quote are doubled, and every other
+// backslash is literal.
 bool append_quoted(wchar_t* out, okw_uptr cap, okw_uptr& at, const wchar_t* s, okw_uptr n) {
+    bool needs = n == 0;
+    for (okw_uptr i = 0; i < n && !needs; ++i)
+        needs = s[i] == L' ' || s[i] == L'\t' || s[i] == L'\n' || s[i] == L'\v' || s[i] == L'"';
+    if (!needs) return append_wide(out, cap, at, s, n);
+
     if (!append_wide(out, cap, at, L"\"", 1)) return false;
     okw_uptr backslashes = 0;
     for (okw_uptr i = 0; i < n; ++i) {
         if (s[i] == L'\\') { ++backslashes; continue; }
-        if (s[i] == L'"') {
-            for (okw_uptr k = 0; k <= backslashes; ++k)
-                if (!append_wide(out, cap, at, L"\\", 1)) return false;
-            backslashes = 0;
-        } else {
-            backslashes = 0;
-        }
-        // The run of separators preceding this character is emitted with it.
-        if (at + 1 >= cap) return false;
-        if (s[i] == L'"') { out[at++] = L'"'; continue; }
-        out[at++] = s[i];
+        const okw_uptr written = s[i] == L'"' ? 2 * backslashes + 1 : backslashes;
+        for (okw_uptr k = 0; k < written; ++k)
+            if (!append_wide(out, cap, at, L"\\", 1)) return false;
+        backslashes = 0;
+        if (!append_wide(out, cap, at, s + i, 1)) return false;
     }
-    for (okw_uptr k = 0; k < backslashes; ++k)
+    for (okw_uptr k = 0; k < 2 * backslashes; ++k)
         if (!append_wide(out, cap, at, L"\\", 1)) return false;
     return append_wide(out, cap, at, L"\"", 1);
 }
@@ -208,6 +248,11 @@ int kal_process_spawn(const kal_spawn* how,
         // was missing until 0.11 was a caller able to say which.
         wchar_t cwd[okw::kMaxName];
         wchar_t line[kCommandLine];
+        // One element, converted before it is quoted into `line'. Its own
+        // buffer: quoting lengthens an element, so converting it in place just
+        // beyond what `line' holds had the quoting overwrite what it had not
+        // yet read.
+        wchar_t one[kCommandLine];
         wchar_t block[kCommandLine];
     };
     auto* work = static_cast<scratch*>(kal_alloc(sizeof(scratch), alignof(scratch)));
@@ -229,6 +274,7 @@ int kal_process_spawn(const kal_spawn* how,
         image[at++] = relative.buffer[i];
     }
     image[at] = 0;
+    (void)plain_name(image, at);
 
     // The same enquiry the image path comes from, upon the other directory.
     wchar_t* cwd = work->cwd;
@@ -236,6 +282,7 @@ int kal_process_spawn(const kal_spawn* how,
                                                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
     if (cn == 0 || cn >= okw::kMaxName - 1) return okw::translate_win32(GetLastError());
     cwd[cn] = 0;
+    (void)plain_name(cwd, cn);
 
     // The vector, unaltered, including its first element.
     wchar_t* line = work->line;
@@ -247,8 +294,8 @@ int kal_process_spawn(const kal_spawn* how,
         // started program split it. Clause 7.6 requires the vector to arrive
         // unaltered, and the quoting is the inverse of that splitting.
         okw_uptr produced = 0;
-        wchar_t* one = line + used + 1;              // beyond what is written
-        const okw_uptr room = kCommandLine - used - 2;
+        wchar_t* one = work->one;
+        const okw_uptr room = kCommandLine - 1;
         if (!append_utf8(one, room, produced, argv[i], argv_lens[i]))
             return argv_lens[i] >= room ? kal_err_no_space : kal_err_invalid;
         if (!append_quoted(line, kCommandLine, used, one, produced))
