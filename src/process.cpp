@@ -22,6 +22,52 @@ namespace {
 
 constexpr okw_uptr kCommandLine = 32768;   // this environment's own bound
 
+// ⚠️ THE HANDLES A START PLACES ARE INHERITABLE FOR THE LENGTH OF THE START AND NO
+// LONGER, AND ONE START AT A TIME DOES THIS.
+//
+// `CreateProcessW' with inheritance enabled gives the started program EVERY
+// inheritable handle of this process, not only the three in its start-up record.
+// A handle left marked after a start reaches the next program started, and a
+// handle marked by a start on another context reaches this one; either way a
+// program ends up holding a pipe that belongs to another, and whoever waits for
+// the end of that pipe waits for the wrong program. So each placed handle is
+// marked, the program is started, and each is put back as it was --- a borrowed
+// standard stream is the caller's and not this operation's to change --- with a
+// lock around the whole of it.
+SRWLOCK_ g_starting{};
+
+struct inheritance {
+    HANDLE handle[3]{};
+    DWORD  before[3]{};
+    bool   marked[3]{};
+    bool   held = false;
+
+    inheritance(bool active, HANDLE in, HANDLE out, HANDLE err) {
+        if (!active) return;
+        AcquireSRWLockExclusive(&g_starting);
+        held = true;
+        const HANDLE given[3] = { in, out, err };
+        for (int i = 0; i < 3; ++i) {
+            handle[i] = given[i];
+            if (given[i] == nullptr || given[i] == INVALID_HANDLE_VALUE) continue;
+            // One stream placed twice --- output and error, typically --- is
+            // marked and put back once.
+            bool again = false;
+            for (int j = 0; j < i; ++j) again = again || (marked[j] && handle[j] == given[i]);
+            if (again) continue;
+            DWORD flags = 0;
+            if (!GetHandleInformation(given[i], &flags)) continue;
+            before[i] = flags & HANDLE_FLAG_INHERIT;
+            marked[i] = SetHandleInformation(given[i], HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) != 0;
+        }
+    }
+    ~inheritance() {
+        for (int i = 2; i >= 0; --i)
+            if (marked[i]) SetHandleInformation(handle[i], HANDLE_FLAG_INHERIT, before[i]);
+        if (held) ReleaseSRWLockExclusive(&g_starting);
+    }
+};
+
 bool append_wide(wchar_t* out, okw_uptr cap, okw_uptr& at, const wchar_t* s, okw_uptr n) {
     if (at + n + 1 >= cap) return false;
     for (okw_uptr i = 0; i < n; ++i) out[at++] = s[i];
@@ -233,18 +279,22 @@ int kal_process_spawn(const kal_spawn* how,
                                             : GetStdHandle(STD_OUTPUT_HANDLE);
         startup.hStdError  = streams->err.h ? reinterpret_cast<void*>(streams->err.h)
                                             : GetStdHandle(STD_ERROR_HANDLE);
-        SetHandleInformation(startup.hStdInput,  HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-        SetHandleInformation(startup.hStdOutput, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-        SetHandleInformation(startup.hStdError,  HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
         inherit = true;
     }
 
     PROCESS_INFORMATION info{};
-    const BOOL started = CreateProcessW(image, argc ? line : nullptr, nullptr, nullptr,
-                                        inherit ? TRUE : FALSE,
-                                        CREATE_UNICODE_ENVIRONMENT,
-                                        envc ? block : nullptr, cwd, &startup, &info);
-    if (!started) return okw::translate_win32(GetLastError());
+    BOOL  started = FALSE;
+    DWORD refusal = 0;
+    {
+        inheritance window(inherit, startup.hStdInput, startup.hStdOutput, startup.hStdError);
+        started = CreateProcessW(image, argc ? line : nullptr, nullptr, nullptr,
+                                 inherit ? TRUE : FALSE,
+                                 CREATE_UNICODE_ENVIRONMENT,
+                                 envc ? block : nullptr, cwd, &startup, &info);
+        // Read before the handles are put back, which may set it again.
+        if (!started) refusal = GetLastError();
+    }
+    if (!started) return okw::translate_win32(refusal);
     CloseHandle(info.hThread);
 
     // ⚠️ ASSIGNED BEFORE THE CALLER IS TOLD ANYTHING. A program that could not be
@@ -335,28 +385,32 @@ void kal_process_job_close(kal_job j) {
 
 // A channel: a pair of streams of which one end is meant to cross a spawn.
 //
-// THIS ENVIRONMENT DECIDES INHERITANCE PER HANDLE AND NOT PER EXEC, which is the
-// opposite of the other two and is why the far end is created inheritable while
-// the near end is not. On a descriptor system every handle is inherited unless
-// marked otherwise, so those implementations mark the ends close-on-exec and let
-// the spawn place the far one deliberately. Here the default is not to inherit,
-// so the far end must be marked to be inheritable and the near end must be left
-// alone --- otherwise the started program would hold both ends and the writer
-// would never observe the end of input.
+// ⚠️⚠️ NEITHER END IS INHERITABLE, AND UNTIL 0.7.2 THE FAR ONE WAS FROM THE MOMENT
+// IT WAS CREATED.
+//
+// This environment decides inheritance per handle, and a start with inheritance
+// enabled gives the program every inheritable handle of this process. A far end
+// created inheritable therefore reached every program started while it existed:
+// the program at the other end of the channel, when the channel carried that
+// program's input --- it then held the writing end of its own input and never
+// observed the end of it, so a parent that wrote and closed waited for ever for a
+// child still reading --- and any program another context started meanwhile,
+// which kept the pipe open after the program it belonged to had ended.
+//
+// The two descriptor implementations create both ends close-on-exec for exactly
+// that reason and let the spawn place the far one deliberately, and this one now
+// does the same: `kal_process_spawn' marks the handles it places for the length of
+// the start (see `inheritance' above).
 int kal_process_channel(kal_stream* mine, kal_stream* theirs) {
     if (mine == nullptr || theirs == nullptr) return kal_err_invalid;
 
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof sa;
-    sa.bInheritHandle = TRUE;
+    sa.bInheritHandle = FALSE;
 
     HANDLE reading = nullptr, writing = nullptr;
     if (!CreatePipe(&reading, &writing, &sa, 0))
         return okw::translate_win32(GetLastError());
-
-    // The near end is withdrawn from inheritance after the fact, because
-    // CreatePipe applies one set of attributes to both.
-    SetHandleInformation(reading, HANDLE_FLAG_INHERIT, 0);
 
     // Bare handles rather than packed ones, because openkal.stream's transfer
     // operations take what this environment takes. kal_fs_stream reports a

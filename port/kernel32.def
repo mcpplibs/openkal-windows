@@ -4,6 +4,7 @@
 ; Generated into an import library by build.mcpp; see port/README.md.
 LIBRARY KERNEL32.dll
 EXPORTS
+AcquireSRWLockExclusive
 CloseHandle
 CreateFileW
 CreatePipe
@@ -22,6 +23,7 @@ GetEnvironmentStringsW
 GetExitCodeProcess
 GetFileType
 GetFinalPathNameByHandleW
+GetHandleInformation
 GetLastError
 GetLogicalDriveStringsW
 GetProcAddress
@@ -38,6 +40,7 @@ PeekNamedPipe
 QueryPerformanceCounter
 QueryPerformanceFrequency
 ReadFile
+ReleaseSRWLockExclusive
 SetConsoleMode
 SetFilePointerEx
 SetHandleInformation

@@ -255,6 +255,7 @@ OKW_IMPORT BOOL   OKW_API CloseHandle(HANDLE);
 OKW_IMPORT DWORD  OKW_API GetLastError(void);
 OKW_IMPORT DWORD  OKW_API GetFileType(HANDLE);
 OKW_IMPORT BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
+OKW_IMPORT BOOL   OKW_API GetHandleInformation(HANDLE, DWORD*);
 // For kal_process_channel. The security attributes decide whether the ends are
 // inheritable, which is what makes one of them able to cross a spawn.
 OKW_IMPORT BOOL   OKW_API CreatePipe(HANDLE*, HANDLE*, SECURITY_ATTRIBUTES*, DWORD);
@@ -334,6 +335,12 @@ OKW_IMPORT BOOL   OKW_API SwitchToThread(void);
 // rests on here. ⚠️ In `API-MS-Win-Core-Synch-l1-2-0`, which is why the link
 // line names `-lsynchronization` rather than only `-lkernel32`.
 OKW_IMPORT BOOL   OKW_API WaitOnAddress(volatile void*, void*, unsigned long long, DWORD);
+// For kal_process_spawn: one start at a time marks handles for inheritance. A
+// slim lock is one pointer and all-zero is unlocked, so a static one needs no
+// initialisation that runs.
+struct SRWLOCK_ { LPVOID Ptr; };
+OKW_IMPORT void   OKW_API AcquireSRWLockExclusive(SRWLOCK_*);
+OKW_IMPORT void   OKW_API ReleaseSRWLockExclusive(SRWLOCK_*);
 OKW_IMPORT void   OKW_API WakeByAddressSingle(void*);
 OKW_IMPORT void   OKW_API WakeByAddressAll(void*);
 
