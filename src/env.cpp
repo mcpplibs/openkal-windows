@@ -33,10 +33,11 @@ int         g_varc = 0;
 
 bool        g_ready = false;
 
-const char* store(const wchar_t* w, int wlen, okw_uptr& out_len, bool names) {
+// Arguments and named values are stored as they were given: neither is a name.
+const char* store(const wchar_t* w, int wlen, okw_uptr& out_len) {
     if (g_used + 4 >= kText) { out_len = 0; return ""; }
     char* at = g_text + g_used;
-    const okw_uptr n = okw::narrow(w, static_cast<okw_uptr>(wlen), at, kText - g_used, names);
+    const okw_uptr n = okw::narrow(w, static_cast<okw_uptr>(wlen), at, kText - g_used, false);
     g_used += n + 1;
     out_len = n;
     return at;
@@ -56,7 +57,7 @@ void prepare() {
             // ⚠️ AS GIVEN, AND UNTIL 0.7.3 EVERY BACKSLASH CAME OUT AS A SLASH.
             // An argument is not a name: `C:\dir' and a pattern's `\d' are what
             // the caller wrote, and clause 7.6 requires the vector unaltered.
-            g_argv[g_argc] = store(parts[i], wide_length(parts[i]), len, false);
+            g_argv[g_argc] = store(parts[i], wide_length(parts[i]), len);
             g_argv_len[g_argc] = len;
             ++g_argc;
         }
@@ -77,7 +78,15 @@ void prepare() {
             // bookkeeping and is not a variable a program set.
             if (p[0] != L'=') {
                 okw_uptr total = 0;
-                const char* entry = store(p, len, total, true);
+                // ⚠️⚠️ AS SET, AND UNTIL 0.7.4 EVERY BACKSLASH IN A VALUE CAME OUT AS
+                // A SLASH. A value is not a name any more than an argument is.
+                // `ComSpec' is where programs find the command interpreter, and
+                // a copy of this environment handed to a started program --- the
+                // only way to give one a changed environment --- carried
+                // `C:/Windows/system32/cmd.exe', which the interpreter reads as
+                // switches: CMake, Ninja and every launcher that runs a command
+                // through it failed with "The syntax of the command is incorrect".
+                const char* entry = store(p, len, total);
                 okw_uptr split = 0;
                 while (split < total && entry[split] != '=') ++split;
                 g_entry[g_varc]     = entry;
