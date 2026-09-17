@@ -54,7 +54,7 @@ void prepare() {
     if (parts) {
         for (int i = 0; i < count && g_argc < kMaxArgs - 1; ++i) {
             okw_uptr len = 0;
-            // ⚠️ AS GIVEN, AND UNTIL 0.7.3 EVERY BACKSLASH CAME OUT AS A SLASH.
+            // AS GIVEN, AND UNTIL 0.7.3 EVERY BACKSLASH CAME OUT AS A SLASH.
             // An argument is not a name: `C:\dir' and a pattern's `\d' are what
             // the caller wrote, and clause 7.6 requires the vector unaltered.
             g_argv[g_argc] = store(parts[i], wide_length(parts[i]), len);
@@ -78,7 +78,7 @@ void prepare() {
             // bookkeeping and is not a variable a program set.
             if (p[0] != L'=') {
                 okw_uptr total = 0;
-                // ⚠️⚠️ AS SET, AND UNTIL 0.7.4 EVERY BACKSLASH IN A VALUE CAME OUT AS
+                // AS SET, AND UNTIL 0.7.4 EVERY BACKSLASH IN A VALUE CAME OUT AS
                 // A SLASH. A value is not a name any more than an argument is.
                 // `ComSpec' is where programs find the command interpreter, and
                 // a copy of this environment handed to a started program --- the

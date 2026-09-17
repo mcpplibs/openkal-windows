@@ -22,7 +22,7 @@ namespace {
 
 constexpr okw_uptr kCommandLine = 32768;   // this environment's own bound
 
-// ⚠️ THE NAMES A STARTED PROGRAM IS GIVEN, IN THE FORM EVERY PROGRAM READS.
+// THE NAMES A STARTED PROGRAM IS GIVEN, IN THE FORM EVERY PROGRAM READS.
 //
 // GetFinalPathNameByHandleW answers with the `\\?\' prefix, which tells this
 // system to take the rest verbatim. CreateProcessW accepts it, and the started
@@ -51,18 +51,26 @@ okw_uptr plain_name(wchar_t* s, okw_uptr n) {
     return n - drop;
 }
 
-// ⚠️ THE HANDLES A START PLACES ARE INHERITABLE FOR THE LENGTH OF THE START AND NO
-// LONGER, AND ONE START AT A TIME DOES THIS.
+// A SPAWN INHERITS ONLY THE HANDLES IT PLACED. Version 0.13.
 //
 // `CreateProcessW' with inheritance enabled gives the started program EVERY
-// inheritable handle of this process, not only the three in its start-up record.
-// A handle left marked after a start reaches the next program started, and a
-// handle marked by a start on another context reaches this one; either way a
-// program ends up holding a pipe that belongs to another, and whoever waits for
-// the end of that pipe waits for the wrong program. So each placed handle is
-// marked, the program is started, and each is put back as it was --- a borrowed
-// standard stream is the caller's and not this operation's to change --- with a
-// lock around the whole of it.
+// inheritable handle of this process, not only the three in its start-up
+// record --- and that was once the whole of what this implementation relied
+// upon: a caller-inheritable handle the caller had not placed here crossed the
+// spawn anyway, because bInheritHandles does not discriminate. A detached
+// child then kept a starter's own standard output open long after the starter
+// had gone, and whoever waited for the end of that pipe waited for the wrong
+// program to end. `PROC_THREAD_ATTRIBUTE_HANDLE_LIST' is the position this
+// system offers for exactly that: it narrows what `CreateProcessW' inherits to
+// the array named there, and a handle outside it is not inherited even when it
+// is itself marked inheritable for some reason of the caller's own.
+//
+// A handle in that array must still be marked inheritable, which is the half
+// this file already did: each placed handle is marked, the program is
+// started, and each is put back as it was --- a borrowed standard stream is
+// the caller's and not this operation's to change --- with a lock around the
+// whole of it, because marking is a property of the handle and not of the
+// call.
 SRWLOCK_ g_starting{};
 
 struct inheritance {
@@ -70,6 +78,12 @@ struct inheritance {
     DWORD  before[3]{};
     bool   marked[3]{};
     bool   held = false;
+    // The handles this start actually places, deduplicated: what goes into
+    // PROC_THREAD_ATTRIBUTE_HANDLE_LIST. The system refuses a list holding one
+    // handle twice, which stdout and stderr placed upon the same pipe would
+    // otherwise be.
+    HANDLE list[3]{};
+    DWORD  count = 0;
 
     inheritance(bool active, HANDLE in, HANDLE out, HANDLE err) {
         if (!active) return;
@@ -80,7 +94,7 @@ struct inheritance {
             handle[i] = given[i];
             if (given[i] == nullptr || given[i] == INVALID_HANDLE_VALUE) continue;
             // One stream placed twice --- output and error, typically --- is
-            // marked and put back once.
+            // marked and put back once, and named once in the list below.
             bool again = false;
             for (int j = 0; j < i; ++j) again = again || (marked[j] && handle[j] == given[i]);
             if (again) continue;
@@ -88,12 +102,51 @@ struct inheritance {
             if (!GetHandleInformation(given[i], &flags)) continue;
             before[i] = flags & HANDLE_FLAG_INHERIT;
             marked[i] = SetHandleInformation(given[i], HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) != 0;
+            // A handle this system would not make inheritable --- a console
+            // pseudo-handle is the ordinary case --- is not named here either:
+            // naming an uninheritable handle in the explicit list is refused by
+            // the call that builds it, where the old, unrestricted inheritance
+            // simply left such a handle uninherited.
+            if (marked[i]) list[count++] = given[i];
         }
     }
     ~inheritance() {
         for (int i = 2; i >= 0; --i)
             if (marked[i]) SetHandleInformation(handle[i], HANDLE_FLAG_INHERIT, before[i]);
         if (held) ReleaseSRWLockExclusive(&g_starting);
+    }
+};
+
+// The attribute list naming `window.list' to `CreateProcessW'. Obtained and
+// released around one call, the way `scratch' below is: this system sizes the
+// buffer for a caller, so there is a first call that only measures.
+struct attribute_list {
+    void* buffer = nullptr;
+    unsigned long long size = 0;
+    LPPROC_THREAD_ATTRIBUTE_LIST list = nullptr;
+
+    bool build(const inheritance& window) {
+        if (window.count == 0) return false;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+        buffer = kal_alloc(static_cast<kal_uintptr>(size), alignof(void*));
+        if (buffer == nullptr) return false;
+        list = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer);
+        if (!InitializeProcThreadAttributeList(list, 1, 0, &size)) { list = nullptr; return false; }
+        // `window.list' outlives this call --- it is the caller's local, held
+        // until CreateProcessW returns --- so nothing here copies it again.
+        if (!UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                       const_cast<HANDLE*>(window.list),
+                                       static_cast<unsigned long long>(window.count) * sizeof(HANDLE),
+                                       nullptr, nullptr)) {
+            DeleteProcThreadAttributeList(list);
+            list = nullptr;
+            return false;
+        }
+        return true;
+    }
+    ~attribute_list() {
+        if (list) DeleteProcThreadAttributeList(list);
+        if (buffer) kal_free(buffer, static_cast<kal_uintptr>(size), alignof(void*));
     }
 };
 
@@ -129,7 +182,7 @@ bool append_utf8(wchar_t* out, okw_uptr cap, okw_uptr& at, const char* s, okw_up
     return true;
 }
 
-// ⚠️⚠️ UNTIL 0.7.3 EVERY SEPARATOR WAS DROPPED, AND EVERY ELEMENT WAS QUOTED.
+// UNTIL 0.7.3 EVERY SEPARATOR WAS DROPPED, AND EVERY ELEMENT WAS QUOTED.
 //
 // A run of backslashes was counted and never written, so `C:\dir\file' arrived as
 // `C:dirfile' and a trailing one ended the quoting early and joined the elements
@@ -168,7 +221,7 @@ extern "C" {
 
 // Starting a program. One function since openkal 0.11.
 //
-// ⚠️ TWO POSITIONS IN `kal_spawn' ARE REFUSED HERE, AND EACH REFUSAL
+// TWO POSITIONS IN `kal_spawn' ARE REFUSED HERE, AND EACH REFUSAL
 // IS OLDER THAN 0.11 --- the record moved, the answers did not.
 //
 // `grants': this environment has no numbering a preopen could arrive under, so
@@ -179,7 +232,7 @@ extern "C" {
 //
 // `KAL_SPAWN_BOUND_LIFETIME': no primitive arms it from inside the started image.
 //
-// ⭐⭐ AND THE UNIT IS IMPLEMENTED HERE, WHICH AN EARLIER SHAPE OF IT WAS NOT.
+// AND THE UNIT IS IMPLEMENTED HERE, WHICH AN EARLIER SHAPE OF IT WAS NOT.
 //
 // 0.11 first spelled this as a flag: make the started program a unit, and let
 // `kal_process_terminate' reach the unit afterwards. That shape could not be
@@ -189,7 +242,7 @@ extern "C" {
 // because `getpgid(pid) == pid' recovers it from the kernel; this one would have
 // needed a registry.
 //
-// ⚠️ Clause 7.1 states mechanically what needing a registry means: the
+// Clause 7.1 states mechanically what needing a registry means: the
 // specification "has taken a shape borrowed from one environment, and THE SHAPE
 // IS AT FAULT rather than the implementation". handle.h says the same one level
 // down --- its array "holds generations and nothing else", and a lookup deciding
@@ -201,7 +254,7 @@ extern "C" {
 // object is created and its handle reported; where the unit is a process group
 // the first member's identifier is reported instead.
 //
-// ⚠️ JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE IS DELIBERATELY NOT SET. It would make
+// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE IS DELIBERATELY NOT SET. It would make
 // `kal_process_job_close' end every member --- and closing means only releasing
 // where the unit is a number, so one operation would mean two things. Ending is
 // `kal_process_job_terminate' and nothing else is.
@@ -243,7 +296,7 @@ int kal_process_spawn(const kal_spawn* how,
     // between execution contexts would make two concurrent spawns one.
     struct scratch {
         wchar_t image[okw::kMaxName];
-        // ⭐ THE DIRECTORY THE PROGRAM RUNS IN, WHICH IS NOT THE ONE IT IS NAMED
+        // THE DIRECTORY THE PROGRAM RUNS IN, WHICH IS NOT THE ONE IT IS NAMED
         // FROM. `CreateProcessW' has taken a current directory all along; what
         // was missing until 0.11 was a caller able to say which.
         wchar_t cwd[okw::kMaxName];
@@ -315,8 +368,9 @@ int kal_process_spawn(const kal_spawn* how,
     }
     block[block_used++] = 0;
 
-    STARTUPINFOW startup{};
-    startup.cb = sizeof startup;
+    STARTUPINFOEXW ex{};
+    STARTUPINFOW& startup = ex.startup;
+    startup.cb = sizeof(STARTUPINFOW);
     bool inherit = false;
     if (streams && (streams->in.h || streams->out.h || streams->err.h)) {
         startup.dwFlags = STARTF_USESTDHANDLES;
@@ -334,9 +388,24 @@ int kal_process_spawn(const kal_spawn* how,
     DWORD refusal = 0;
     {
         inheritance window(inherit, startup.hStdInput, startup.hStdOutput, startup.hStdError);
+
+        // ONLY THE HANDLES `window' NAMED ARE ASKED TO CROSS. Without an
+        // explicit list, bInheritHandles=TRUE would still hand the started
+        // program every inheritable handle of this process, so it is set only
+        // together with the list that narrows what that means; a request with
+        // nothing markable inherits nothing rather than everything.
+        attribute_list attrs;
+        DWORD creation = CREATE_UNICODE_ENVIRONMENT;
+        BOOL  inherit_handles = FALSE;
+        if (window.count > 0 && attrs.build(window)) {
+            startup.cb = sizeof(STARTUPINFOEXW);
+            ex.lpAttributeList = attrs.list;
+            creation |= EXTENDED_STARTUPINFO_PRESENT;
+            inherit_handles = TRUE;
+        }
+
         started = CreateProcessW(image, argc ? line : nullptr, nullptr, nullptr,
-                                 inherit ? TRUE : FALSE,
-                                 CREATE_UNICODE_ENVIRONMENT,
+                                 inherit_handles, creation,
                                  envc ? block : nullptr, cwd, &startup, &info);
         // Read before the handles are put back, which may set it again.
         if (!started) refusal = GetLastError();
@@ -344,7 +413,7 @@ int kal_process_spawn(const kal_spawn* how,
     if (!started) return okw::translate_win32(refusal);
     CloseHandle(info.hThread);
 
-    // ⚠️ ASSIGNED BEFORE THE CALLER IS TOLD ANYTHING. A program that could not be
+    // ASSIGNED BEFORE THE CALLER IS TOLD ANYTHING. A program that could not be
     // put into the unit is not the program that was asked for --- it would outlive
     // a termination of the unit --- so it is ended rather than handed back.
     if (unit && !AssignProcessToJobObject(unit, info.hProcess)) {
@@ -361,9 +430,9 @@ int kal_process_spawn(const kal_spawn* how,
     return kal_ok;
 }
 
-// ⭐⭐ A WORD THIS ENVIRONMENT SETS WHEN SOMEBODY HAS ASKED THIS PROGRAM TO END.
+// A WORD THIS ENVIRONMENT SETS WHEN SOMEBODY HAS ASKED THIS PROGRAM TO END.
 //
-// ⚠️ AND THIS IS WHY THE INTERFACE IS A WORD RATHER THAN A HANDLER. The
+// AND THIS IS WHY THE INTERFACE IS A WORD RATHER THAN A HANDLER. The
 // notification here arrives ON A CONTEXT OF ITS OWN --- the environment starts one
 // to run the routine --- which is nothing like a disposition interrupting whatever
 // was running. An interface shaped like the other system's signals would have
@@ -383,14 +452,14 @@ BOOL OKW_API stop_routine(DWORD) {
 }
 }  // namespace
 
-// ⚠️ Armed on the first enquiry, so that adding this operation changes nothing
+// Armed on the first enquiry, so that adding this operation changes nothing
 // for a program that does not use it.
 const kal_u32* kal_process_stop_requested(void) {
     if (!g_stop_armed) { g_stop_armed = 1; SetConsoleCtrlHandler(stop_routine, TRUE); }
     return &g_stop_word;
 }
 
-// This program itself joins or forms a unit. ⭐ NATURAL HERE TOO, and by the
+// This program itself joins or forms a unit. NATURAL HERE TOO, and by the
 // route this environment already offers: a job object is created before it has
 // members, so the caller simply becomes its first one.
 int kal_process_job_enter(kal_job* j) {
@@ -423,7 +492,7 @@ int kal_process_job_terminate(kal_job j) {
     return kal_ok;
 }
 
-// ⚠️ RELEASES AND DOES NOT END. The limit that would have ended the members on
+// RELEASES AND DOES NOT END. The limit that would have ended the members on
 // the last close is deliberately not set --- see the note above kal_process_spawn.
 void kal_process_job_close(kal_job j) {
     HANDLE h = okw::unpack(j.h);
@@ -432,7 +501,7 @@ void kal_process_job_close(kal_job j) {
 
 // A channel: a pair of streams of which one end is meant to cross a spawn.
 //
-// ⚠️⚠️ NEITHER END IS INHERITABLE, AND UNTIL 0.7.2 THE FAR ONE WAS FROM THE MOMENT
+// NEITHER END IS INHERITABLE, AND UNTIL 0.7.2 THE FAR ONE WAS FROM THE MOMENT
 // IT WAS CREATED.
 //
 // This environment decides inheritance per handle, and a start with inheritance
@@ -514,7 +583,7 @@ void kal_process_close(kal_process p) {
     if (h) { okw::retire(p.h); CloseHandle(h); }
 }
 
-// ⚠️ THREE POSITIONS ARE DELIBERATELY ABSENT, AND EACH IS ABSENT BECAUSE THE
+// THREE POSITIONS ARE DELIBERATELY ABSENT, AND EACH IS ABSENT BECAUSE THE
 // NEXT CALL REFUSES IT. A word claiming a facility the operation then declines is
 // the disagreement clause 6.2 exists to prevent, so the two are written together
 // and read together:

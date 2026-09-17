@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.9.0"
+openkal = "0.13.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.5.0"
+openkal-windows = "0.8.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -117,10 +117,35 @@ The four that openkal 0.8 added and this implementation now provides:
 
 | | on this system |
 | --- | --- |
-| `openkal.net` | Winsock, started once at the first socket and never stopped. ⚠️ `WSASocketW` with a flags word of zero rather than `socket`: the latter makes an **overlapped** handle, and `ReadFile` upon one of those returns before the bytes arrive. A non-overlapped socket is what lets a connection be a stream here with no second transfer path |
-| `openkal.datagram` | the same calls with `SOCK_DGRAM`. ⚠️ This system reports a truncated message as a **failure** where the other two truncate silently; the bytes that fit are delivered either way, and the interface says the excess is lost |
+| `openkal.net` | Winsock, started once at the first socket and never stopped. Every socket is made with `WSA_FLAG_OVERLAPPED`, and version 0.13 requires it: a synchronous socket shares one completion event between its two directions, so a read waiting in one thread held back a write from another on the same connection. The transfer operations issue `ReadFile`/`WriteFile` with an `OVERLAPPED` of their own and wait for it, so the two directions no longer contend for one event |
+| `openkal.datagram` | the same calls with `SOCK_DGRAM`, `WSASendTo`/`WSARecvFrom` with their own `OVERLAPPED` for the same reason. This system reports a truncated message as a **failure** where the other two truncate silently; the bytes that fit are delivered either way, and the interface says the excess is lost |
 | `openkal.timeout` | `WSAPoll`, which answers for sockets and for nothing else. A bounded read of a stream that is not a socket reports `kal_err_not_supported` — which the interface's own header anticipates in terms. `kal_timeout_wait_process` is the one operation of the interface this system provides **directly**, because a bounded wait upon an object is the primitive here |
 | `openkal.exec` | `VirtualAlloc` writable, `VirtualProtect` executable, `FlushInstructionCache`. The third call is not optional and the other two systems' implementations do not need to make it explicit |
+
+## Version 0.13
+
+**A name that exists and is not a form this environment can start.**
+`CreateProcessW` reports `ERROR_BAD_EXE_FORMAT` for an image whose header this
+loader does not recognise and `ERROR_EXE_MACHINE_TYPE_MISMATCH` for one built for
+a different processor; both arrive here as `kal_err_not_program` rather than
+`kal_err_io`, which is what let a caller distinguish a name that is not there
+from one that is and cannot be started.
+
+**Whether a node may be started is not recorded on this system's ordinary
+volumes.** `kal_fs_set_executable_at` validates its arguments as its siblings do
+and reports `kal_err_not_supported`; `KAL_FS_PROP_EXECUTABLE` is not claimed, and
+`kal_fs_info`/`kal_fs_file_info` never set `KAL_INFO_EXECUTABLE`. Whether a
+name may be started here is decided by its form when it is started, not read
+from a property a volume stores.
+
+**A spawn inherits only the handles it placed.** `CreateProcessW` with
+inheritance enabled hands the started program every inheritable handle of this
+process, not only the ones a caller named — a defect distinct from the
+specification, found by a detached child that kept a starter's standard output
+open long after the starter had gone. The fix is `STARTUPINFOEXW` with a
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` naming exactly the deduplicated, non-null
+standard handles this operation placed; a handle the caller made inheritable for
+some other reason and did not place is no longer inherited.
 
 ## Verification
 
@@ -166,13 +191,13 @@ assumed — `WaitOnAddress` and its two neighbours are **not** in `kernel32.dll`
 and putting them there produces an import table that links and then fails to
 bind.
 
-⚠️ **Supplied only where the system's own are absent.** On this system they are
+**Supplied only where the system's own are absent.** On this system they are
 present, they are the vendor's, and they list every name rather than the
 forty-five this implementation calls; `-L` is searched first, so supplying ours
 there would shadow them and a consumer calling a forty-sixth would be told there
 is no such name.
 
-⚠️ Measured 2026-08-22, on a clean continuous-integration runner, after every
+Measured 2026-08-22, on a clean continuous-integration runner, after every
 object had compiled:
 
 ```

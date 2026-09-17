@@ -1,11 +1,49 @@
 #include "win.h"
+#include "endpoint.h"
 #include <openkal/stream.h>
+
+// The transfer operations of openkal.stream. A file, a pipe and a socket all
+// arrive here as one HANDLE-shaped word; every one of them reads and writes
+// through `ReadFile'/`WriteFile', and a socket differs only in how the one
+// transfer is carried out --- see below and src/net.cpp's note on why a socket
+// is overlapped at all, version 0.13.
 
 namespace {
 
 void* handle_of(kal_stream s) { return reinterpret_cast<void*>(s.h); }
 
 bool valid(void* h) { return h != nullptr && h != INVALID_HANDLE_VALUE; }
+
+// One transfer upon an overlapped handle: an event of its own, issued and
+// waited for synchronously, so that this call's completion does not depend on
+// or contend with another transfer in the other direction upon the same
+// handle. `kal_stream_read'/`kal_stream_write' remain synchronous from their
+// caller's point of view; only the mechanism underneath changes.
+//
+// A count short of what was asked is a correct report of an overlapped
+// transfer exactly as it is of a synchronous one --- this is one call, not the
+// loop `kal_stream_write' performs to satisfy clause 7.4.
+bool overlapped_once(void* h, void* buf, DWORD want, bool write,
+                     DWORD* moved, DWORD* err) {
+    HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (ev == nullptr) { *err = GetLastError(); return false; }
+    OVERLAPPED ov{};
+    ov.hEvent = ev;
+    const BOOL immediate = write ? WriteFile(h, buf, want, moved, &ov)
+                                 : ReadFile(h, buf, want, moved, &ov);
+    bool ok = immediate != 0;
+    if (!ok) {
+        const DWORD e = GetLastError();
+        if (e == ERROR_IO_PENDING) {
+            ok = GetOverlappedResult(h, &ov, moved, TRUE) != 0;
+            if (!ok) *err = GetLastError();
+        } else {
+            *err = e;
+        }
+    }
+    CloseHandle(ev);
+    return ok;
+}
 
 }  // namespace
 
@@ -21,6 +59,7 @@ kal_stream kal_stderr(void) { return kal_stream{ reinterpret_cast<kal_uintptr>(G
 kal_intptr kal_stream_write(kal_stream s, const void* buf, kal_uintptr len) {
     void* h = handle_of(s);
     if (!valid(h)) return -kal_err_invalid;
+    const bool socket = okw::is_socket_handle(h);
     const auto* p = static_cast<const unsigned char*>(buf);
     kal_uintptr done = 0;
     while (done < len) {
@@ -31,9 +70,15 @@ kal_intptr kal_stream_write(kal_stream s, const void* buf, kal_uintptr len) {
         const kal_uintptr want = len - done;
         const DWORD chunk = want > 0x7fffffffu ? 0x7fffffffu : static_cast<DWORD>(want);
         DWORD written = 0;
-        if (!WriteFile(h, p + done, chunk, &written, nullptr)) {
+        DWORD err = 0;
+        const bool ok = socket
+            ? overlapped_once(h, const_cast<unsigned char*>(p + done), chunk,
+                              true, &written, &err)
+            : WriteFile(h, p + done, chunk, &written, nullptr) != 0;
+        if (!ok) {
+            if (!socket) err = GetLastError();
             if (done != 0) return static_cast<kal_intptr>(done);
-            return -okw::translate_win32(GetLastError());
+            return -okw::translate_win32(err);
         }
         if (written == 0) break;
         done += written;
@@ -44,15 +89,20 @@ kal_intptr kal_stream_write(kal_stream s, const void* buf, kal_uintptr len) {
 kal_intptr kal_stream_read(kal_stream s, void* buf, kal_uintptr len) {
     void* h = handle_of(s);
     if (!valid(h)) return -kal_err_invalid;
+    const bool socket = okw::is_socket_handle(h);
     const DWORD want = len > 0x7fffffffu ? 0x7fffffffu : static_cast<DWORD>(len);
     DWORD got = 0;
-    if (!ReadFile(h, buf, want, &got, nullptr)) {
-        const unsigned long e = GetLastError();
+    DWORD err = 0;
+    const bool ok = socket
+        ? overlapped_once(h, buf, want, false, &got, &err)
+        : ReadFile(h, buf, want, &got, nullptr) != 0;
+    if (!ok) {
+        if (!socket) err = GetLastError();
         // The end of a pipe whose other side has gone is the end of input, and
         // this environment reports it as a failure. A caller that could not
         // tell the two apart would treat every completed transfer as broken.
-        if (e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF) return 0;
-        return -okw::translate_win32(e);
+        if (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF) return 0;
+        return -okw::translate_win32(err);
     }
     // A short read is reported as it occurred: unlike a short write it carries
     // information the caller requires, and zero denotes the end of input.

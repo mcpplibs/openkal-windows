@@ -1,4 +1,4 @@
-; The suspension primitive. ⚠️ NOT IN kernel32.dll — these three live in
+; The suspension primitive. NOT IN kernel32.dll — these three live in
 ; the API set below, and an import table naming the wrong library links and
 ; then fails to bind. Read out of mingw's own libsynchronization.a rather
 ; than assumed.

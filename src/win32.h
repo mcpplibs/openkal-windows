@@ -1,6 +1,6 @@
 // The whole of what this implementation uses from this system's own interface.
 //
-// ⭐⭐ WHY THIS FILE EXISTS, AND WHY IT IS NOT A DEVIATION.
+// WHY THIS FILE EXISTS, AND WHY IT IS NOT A DEVIATION.
 //
 // openkal is a specification. It says nothing about how a backend is
 // implemented, and the four that exist do it four ways: openkal-linux issues
@@ -15,7 +15,7 @@
 // machine has. On a machine with neither, the build fails naming a header
 // rather than a missing dependency.
 //
-// ⚠️ Measured 2026-08-23, cross-compiling this package with the target side
+// Measured 2026-08-23, cross-compiling this package with the target side
 // coming from packages rather than from a payload:
 //
 //     win.h:35 → /usr/x86_64-w64-mingw32/include/windows.h
@@ -27,12 +27,12 @@
 // succeed against different declarations, which is the shape of every false
 // green this repository has recorded.
 //
-// ⭐ AND THE OTHER THREE IMPLEMENTATIONS ALREADY SHOW THE ANSWER. None of them
+// AND THE OTHER THREE IMPLEMENTATIONS ALREADY SHOW THE ANSWER. None of them
 // takes a vendor SDK: openkal-linux writes the system-call numbers, openkal-
 // opensbi writes the SBI extension identifiers, openkal-macos writes a stub
 // listing the two names it borrows. This file is that, for this system.
 //
-// ⚠️ AND HALF OF IT WAS ALREADY WRITTEN. `win.h` beside this file has carried
+// AND HALF OF IT WAS ALREADY WRITTEN. `win.h` beside this file has carried
 // the entire NT object-manager layer since it was written, with the reason
 // stated: `<winternl.h>` "is present in one toolchain's sources and partial in
 // another's". That argument was always the same argument; it had only been
@@ -41,7 +41,7 @@
 //
 // HOW THE LIST WAS OBTAINED
 //
-// ⚠️ Not by reading the sources. `<windows.h>` was removed and the compiler was
+// Not by reading the sources. `<windows.h>` was removed and the compiler was
 // asked what it then could not resolve; the answer is this file. That is the
 // same method openkal-macos used for its stub, and it is preferred for the same
 // reason: a reading produces names the configured build never uses, and the
@@ -50,13 +50,13 @@
 
 // ── the machine's own words ─────────────────────────────────────────────────
 //
-// ⚠️ Written out rather than taken from a C library. This package is built by
+// Written out rather than taken from a C library. This package is built by
 // three toolchains and this file must mean the same thing under all of them,
 // and `<windows.h>`'s own spellings are ultimately these.
 using BOOL    = int;
 using BYTE    = unsigned char;
 using WORD    = unsigned short;
-using DWORD   = unsigned long;      // ⚠️ `long`, not `int` — this is LLP64
+using DWORD   = unsigned long;      // `long`, not `int` — this is LLP64
 using UINT    = unsigned int;
 using ULONG   = unsigned long;
 using LONG    = long;
@@ -69,12 +69,12 @@ using LPCWSTR = const wchar_t*;
 using LPSTR   = char*;
 using LPCSTR  = const char*;
 
-// The calling convention. ⚠️ It is ignored on the 64-bit ABI and load-bearing on
+// The calling convention. It is ignored on the 64-bit ABI and load-bearing on
 // the 32-bit one, and writing it costs nothing on either — while omitting it
 // would make this file wrong for a target it is otherwise correct for.
 #define OKW_API __stdcall
 
-// ⭐⭐ AND WHERE THEY LIVE, WHICH IS NOT AN OPTIMISATION.
+// AND WHERE THEY LIVE, WHICH IS NOT AN OPTIMISATION.
 //
 // Every function below is in a DLL, and `<windows.h>` says so with
 // `__declspec(dllimport)`. Omitting it still LINKS: the linker notices the
@@ -82,7 +82,7 @@ using LPCSTR  = const char*;
 // through the import table. The program runs, so nothing here fails — and that
 // is exactly why it has to be written rather than discovered.
 //
-// ⚠️ Measured 2026-08-23. This package's own independence check permits
+// Measured 2026-08-23. This package's own independence check permits
 // `__imp_*` because those names ARE this environment's interface reached
 // through its import table, and it rejects everything else because everything
 // else would be a C runtime. Declaring these without `dllimport` made the
@@ -120,7 +120,7 @@ struct OVERLAPPED {
     HANDLE hEvent;
 };
 
-// ⚠️ THE LAYOUT IS THE CONTRACT. These two are filled in by this package and
+// THE LAYOUT IS THE CONTRACT. These two are filled in by this package and
 // read by the system, so a member of the wrong width does not fail to compile —
 // it shifts everything after it. The order is the documented one.
 struct STARTUPINFOW {
@@ -142,8 +142,20 @@ struct PROCESS_INFORMATION {
     DWORD  dwThreadId;
 };
 
+// The extended form, version 0.13: a STARTUPINFOW with an attribute list
+// attached, so that a start can narrow which handles are inherited to a list
+// this operation names rather than every inheritable handle of the caller. The
+// first member is a STARTUPINFOW so that a pointer to this may be passed where
+// CreateProcessW's declaration below still names STARTUPINFOW — the layout
+// agrees with `cb' and `EXTENDED_STARTUPINFO_PRESENT' the way the system
+// documents it.
+struct STARTUPINFOEXW {
+    STARTUPINFOW startup;
+    LPVOID       lpAttributeList;
+};
+
 // ── the constants this package names ────────────────────────────────────────
-// ⚠️ NOT `constexpr`. A cast from an integer to a pointer is not a constant
+// NOT `constexpr`. A cast from an integer to a pointer is not a constant
 // expression, and the compiler says so — `<windows.h>` spells this as a macro
 // for the same reason. `inline const` gives one object across every translation
 // unit without claiming something the language does not allow.
@@ -165,7 +177,7 @@ enum : DWORD {
     FILE_SHARE_READ   = 0x1, FILE_SHARE_WRITE = 0x2, FILE_SHARE_DELETE = 0x4,
 
     // The access rights this package asks for, and the two composites the
-    // system documents. ⚠️ A composite written as its own number rather than
+    // system documents. A composite written as its own number rather than
     // assembled here: assembling it would be this file deciding what the system
     // means by "generic read", and it does not get to decide that.
     FILE_READ_DATA        = 0x0001,
@@ -196,6 +208,13 @@ enum : DWORD {
     HANDLE_FLAG_INHERIT   = 0x1,
     STARTF_USESTDHANDLES  = 0x00000100u,
 
+    // For kal_process_spawn: the explicit handle-inheritance list, version
+    // 0.13. `EXTENDED_STARTUPINFO_PRESENT' tells CreateProcessW that
+    // `STARTUPINFOEXW.lpAttributeList' is populated; the attribute number is the
+    // one this system documents for `PROC_THREAD_ATTRIBUTE_HANDLE_LIST'.
+    EXTENDED_STARTUPINFO_PRESENT     = 0x00080000u,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002u,
+
     INFINITE       = 0xFFFFFFFFu,
     WAIT_OBJECT_0  = 0x00000000u,
     WAIT_TIMEOUT_  = 0x00000102u,
@@ -204,7 +223,7 @@ enum : DWORD {
     MB_ERR_INVALID_CHARS  = 0x8,
 };
 
-// The error values this package translates. ⚠️ Only these — openkal's error set
+// The error values this package translates. Only these — openkal's error set
 // is closed, and a value with no mapping is reported as `kal_err_io` rather than
 // invented, so listing more would be listing names nothing reads.
 enum : DWORD {
@@ -223,6 +242,17 @@ enum : DWORD {
     ERROR_INVALID_PARAMETER     = 87,
     ERROR_CALL_NOT_IMPLEMENTED  = 120,
     ERROR_NEGATIVE_SEEK         = 131,
+
+    // A name that exists and is not a form this loader can start. Version 0.13,
+    // kal_err_not_program. Measured under Wine (`kal_process_spawn` upon a text
+    // file with no recognised extension): ERROR_BAD_EXE_FORMAT. The second is
+    // this loader's documented report for an image built for another processor,
+    // which is the same condition under a different cause and has no separate
+    // value in openkal's closed set to be folded into.
+    ERROR_INVALID_EXE_SIGNATURE      = 191,
+    ERROR_EXE_MARKED_INVALID         = 192,
+    ERROR_BAD_EXE_FORMAT             = 193,
+    ERROR_EXE_MACHINE_TYPE_MISMATCH  = 216,
     ERROR_DISK_FULL             = 112,
     ERROR_INVALID_NAME          = 123,
     ERROR_FILENAME_EXCED_RANGE  = 206,
@@ -284,6 +314,13 @@ OKW_IMPORT BOOL OKW_API GetConsoleScreenBufferInfo(HANDLE, CONSOLE_SCREEN_BUFFER
 OKW_IMPORT BOOL   OKW_API ReadFile(HANDLE, LPVOID, DWORD, DWORD*, OVERLAPPED*);
 OKW_IMPORT BOOL   OKW_API WriteFile(HANDLE, LPCVOID, DWORD, DWORD*, OVERLAPPED*);
 OKW_IMPORT BOOL   OKW_API FlushFileBuffers(HANDLE);
+// For a transfer upon an overlapped socket, version 0.13: an event of its own
+// and a synchronous wait for the one operation that used it, so that two
+// directions of a connection do not contend for one handle-wide completion
+// signal. src/net.cpp and src/datagram.cpp say why the socket is overlapped at
+// all.
+OKW_IMPORT HANDLE OKW_API CreateEventW(SECURITY_ATTRIBUTES*, BOOL, BOOL, LPCWSTR);
+OKW_IMPORT BOOL   OKW_API GetOverlappedResult(HANDLE, OVERLAPPED*, DWORD*, BOOL);
 OKW_IMPORT BOOL   OKW_API SetFilePointerEx(HANDLE, LARGE_INTEGER, LARGE_INTEGER*, DWORD);
 OKW_IMPORT HANDLE OKW_API CreateFileW(LPCWSTR, DWORD, DWORD, SECURITY_ATTRIBUTES*,
                            DWORD, DWORD, HANDLE);
@@ -306,10 +343,22 @@ OKW_IMPORT BOOL   OKW_API CreateProcessW(LPCWSTR, LPWSTR, SECURITY_ATTRIBUTES*,
 OKW_IMPORT BOOL   OKW_API GetExitCodeProcess(HANDLE, DWORD*);
 OKW_IMPORT BOOL   OKW_API TerminateProcess(HANDLE, UINT);
 
+// The explicit handle-inheritance list, version 0.13. `lpSize' is filled by a
+// first call with a null list and consulted by a second that allocates a
+// buffer of that size; `UpdateProcThreadAttribute' then attaches the array of
+// handles this operation placed, under `PROC_THREAD_ATTRIBUTE_HANDLE_LIST'.
+using LPPROC_THREAD_ATTRIBUTE_LIST = void*;
+OKW_IMPORT BOOL OKW_API InitializeProcThreadAttributeList(
+    LPPROC_THREAD_ATTRIBUTE_LIST, DWORD, DWORD, unsigned long long*);
+OKW_IMPORT BOOL OKW_API UpdateProcThreadAttribute(
+    LPPROC_THREAD_ATTRIBUTE_LIST, DWORD, unsigned long long, LPVOID,
+    unsigned long long, LPVOID, unsigned long long*);
+OKW_IMPORT void OKW_API DeleteProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST);
+
 // openkal 0.11: the unit a set of started programs forms. A job object ends its
 // members as one, which is what `kal_process_job_terminate' is.
 //
-// ⚠️ NO `SetInformationJobObject' HERE, AND ITS ABSENCE IS THE DESIGN. The limit
+// NO `SetInformationJobObject' HERE, AND ITS ABSENCE IS THE DESIGN. The limit
 // that ends members when the last handle closes --- JOB_OBJECT_LIMIT_KILL_ON_JOB_
 // CLOSE --- is exactly what must NOT be set: `kal_process_job_close' releases and
 // does not end, because where a unit is a process group closing is releasing a
@@ -332,7 +381,7 @@ OKW_IMPORT void   OKW_API Sleep(DWORD);
 OKW_IMPORT BOOL   OKW_API SwitchToThread(void);
 
 // The address-based wait, which is what openkal.task's suspension primitive
-// rests on here. ⚠️ In `API-MS-Win-Core-Synch-l1-2-0`, which is why the link
+// rests on here. In `API-MS-Win-Core-Synch-l1-2-0`, which is why the link
 // line names `-lsynchronization` rather than only `-lkernel32`.
 OKW_IMPORT BOOL   OKW_API WaitOnAddress(volatile void*, void*, unsigned long long, DWORD);
 // For kal_process_spawn: one start at a time marks handles for inheritance. A
@@ -396,7 +445,7 @@ OKW_IMPORT DWORD OKW_API RtlNtStatusToDosError(long);
 
 // ── ws2_32: this system's network interface ─────────────────────────────────
 //
-// ⚠️⚠️ NOT DECLARED AS IMPORTS AND NOT LINKED, AND THE REASON IS A COLLISION
+// NOT DECLARED AS IMPORTS AND NOT LINKED, AND THE REASON IS A COLLISION
 // RATHER THAN A PREFERENCE.
 //
 // This library's names ARE the BSD names --- `bind', `listen', `accept',
@@ -413,13 +462,13 @@ OKW_IMPORT DWORD OKW_API RtlNtStatusToDosError(long);
 // import library's member defines the thunk AND the `__imp_' pointer together,
 // so reaching for either brings both.
 //
-// ⭐ THE NAMES ARE THEREFORE REACHED AT RUN TIME, THROUGH THE LIBRARY'S OWN
+// THE NAMES ARE THEREFORE REACHED AT RUN TIME, THROUGH THE LIBRARY'S OWN
 // LOADER. Nothing of ws2_32 enters this program's symbol table, so the C
 // library above keeps its `bind' and this implementation still reaches the
 // system's. `ws2_32.dll' is a core component of every installation of this
 // system, and src/endpoint.h states what happens if it is somehow absent.
 //
-// ⚠️ AND THREE CONSTANTS DIFFER FROM THE OTHER SYSTEMS' WITHOUT ANNOUNCING IT:
+// AND THREE CONSTANTS DIFFER FROM THE OTHER SYSTEMS' WITHOUT ANNOUNCING IT:
 // `AF_INET6' is 23 here, 30 on macOS and 10 on Linux; `SOL_SOCKET' is 0xffff
 // here and on macOS and 1 on Linux; and this system's `poll' has no bit named
 // POLLIN --- what it has is POLLRDNORM, and a caller that passed the Linux
@@ -438,6 +487,10 @@ enum : int {
     SOCK_STREAM_ = 1, SOCK_DGRAM_ = 2,
     IPPROTO_TCP_ = 6, IPPROTO_UDP_ = 17,
     SD_RECEIVE_ = 0, SD_SEND_ = 1, SD_BOTH_ = 2,
+    // Version 0.13: every socket this implementation makes is overlapped, so
+    // that its two directions transfer through their own OVERLAPPED rather than
+    // contend for the one completion event a synchronous handle has.
+    WSA_FLAG_OVERLAPPED_ = 0x01,
 };
 
 // What this system's `poll' names its bits. POLLRDNORM and POLLWRNORM are what
@@ -470,8 +523,11 @@ struct ksockaddr_in6 {
 
 struct ksockaddr_storage { unsigned char pad[128]; };
 
+// One buffer, for the overlapped forms of send and receive. Version 0.13.
+struct WSABUF_ { DWORD len; char* buf; };
+
 // The shapes of the calls, so that a pointer obtained at run time is still
-// type-checked. ⚠️ THE LAYOUT RULE OF THIS FILE APPLIES HERE TOO: a signature
+// type-checked. THE LAYOUT RULE OF THIS FILE APPLIES HERE TOO: a signature
 // that is wrong does not fail to compile, because nothing checks it against the
 // system --- it produces a call with the wrong arguments in the wrong places.
 using pfn_WSAStartup      = int    (OKW_API*)(WORD, void*);
@@ -488,3 +544,10 @@ using pfn_getpeername     = int    (OKW_API*)(SOCKET, void*, int*);
 using pfn_sendto          = int    (OKW_API*)(SOCKET, const char*, int, int, const void*, int);
 using pfn_recvfrom        = int    (OKW_API*)(SOCKET, char*, int, int, void*, int*);
 using pfn_WSAPoll         = int    (OKW_API*)(WSAPOLLFD_*, ULONG, int);
+// Version 0.13: the overlapped forms, so that a datagram socket's send and
+// receive transfer through their own OVERLAPPED rather than the one completion
+// event a synchronous handle's `sendto'/`recvfrom' would contend upon.
+using pfn_WSASendTo   = int (OKW_API*)(SOCKET, WSABUF_*, DWORD, DWORD*, DWORD,
+                                       const void*, int, OVERLAPPED*, LPVOID);
+using pfn_WSARecvFrom = int (OKW_API*)(SOCKET, WSABUF_*, DWORD, DWORD*, DWORD*,
+                                       void*, int*, OVERLAPPED*, LPVOID);

@@ -8,7 +8,7 @@ extern "C" {
 kal_u64 kal_version(void) { return KAL_VERSION; }
 
 kal_u64 kal_interfaces(void) {
-    // ⚠️ `openkal.space' IS ABSENT AND THE WORD SAYS SO. This system starts a
+    // `openkal.space' IS ABSENT AND THE WORD SAYS SO. This system starts a
     // NAMED PROGRAM and has no primitive that copies an address space, so the
     // interface is not provided at all --- a consumer that is linked learns that
     // from the linker, and one bound otherwise learns it here.

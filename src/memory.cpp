@@ -64,7 +64,7 @@ void kal_free(void* p, kal_uintptr size, kal_uintptr align) {
 
 // The quantum this environment allocates and protects memory in.
 //
-// ⭐⭐ THIS SYSTEM HAS TWO, AND THE COARSER IS REPORTED. It protects memory in
+// THIS SYSTEM HAS TWO, AND THE COARSER IS REPORTED. It protects memory in
 // pages of four kilobytes and RESERVES it in units of sixty-four --- so a value
 // taken from either alone is wrong for the other, and a specification that
 // derived one number from the page size of one family of systems would be wrong

@@ -6,10 +6,12 @@ LIBRARY KERNEL32.dll
 EXPORTS
 AcquireSRWLockExclusive
 CloseHandle
+CreateEventW
 CreateFileW
 CreatePipe
 CreateProcessW
 CreateThread
+DeleteProcThreadAttributeList
 FlushFileBuffers
 FlushInstructionCache
 FreeEnvironmentStringsW
@@ -26,6 +28,7 @@ GetFinalPathNameByHandleW
 GetHandleInformation
 GetLastError
 GetLogicalDriveStringsW
+GetOverlappedResult
 GetProcAddress
 GetProcessHeap
 GetStdHandle
@@ -33,6 +36,7 @@ GetSystemInfo
 GetSystemTimePreciseAsFileTime
 HeapAlloc
 HeapFree
+InitializeProcThreadAttributeList
 LoadLibraryW
 LocalFree
 MultiByteToWideChar
@@ -51,6 +55,7 @@ CreateJobObjectW
 AssignProcessToJobObject
 TerminateJobObject
 SetConsoleCtrlHandler
+UpdateProcThreadAttribute
 VirtualAlloc
 VirtualFree
 VirtualProtect

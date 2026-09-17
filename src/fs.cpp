@@ -166,14 +166,14 @@ int fill(void* h, kal_u32 wanted, kal_node_info* out) {
                                                                : kal_node_file;
     v.writable = (basic.attributes & FILE_ATTRIBUTE_READONLY) ? 0 : 1;
 
-    // ⭐ THE IDENTITY IS TWO WORDS BECAUSE ONE IS NOT ENOUGH, AND THIS
+    // THE IDENTITY IS TWO WORDS BECAUSE ONE IS NOT ENOUGH, AND THIS
     // ENVIRONMENT SAYS SO ITSELF: the index it keeps for a file is unique
     // WITHIN A VOLUME, so two files on two volumes can share one. The volume's
     // serial number is the other word. Where either enquiry is refused --- a
     // handle to something that is not on a volume --- the position is left
     // clear and a caller is told that this is not known, rather than being told
     // that two different nodes are the same.
-    // ⚠️⚠️ THE VOLUME ENQUIRY REPORTS AN OVERFLOW AND ANSWERS ANYWAY, AND
+    // THE VOLUME ENQUIRY REPORTS AN OVERFLOW AND ANSWERS ANYWAY, AND
     // TREATING THE OVERFLOW AS A FAILURE THREW THE ANSWER AWAY.
     //
     // FILE_FS_VOLUME_INFORMATION ends in the volume's LABEL, which is as long
@@ -183,7 +183,7 @@ int fill(void* h, kal_u32 wanted, kal_node_info* out) {
     // because the label did not fit. That value is 0x80000005: negative, so
     // `okw::ok' said no, so the position was left clear.
     //
-    // ⭐ WHICH IS A CORRECT REPORT OF SOMETHING THAT WAS NOT TRUE. The
+    // WHICH IS A CORRECT REPORT OF SOMETHING THAT WAS NOT TRUE. The
     // implementation was saying "this node's identity is not known here", a
     // caller was believing it, and the identity was sitting in the buffer. It
     // surfaced two packages away, in openkal-musl's probe: `two different files
@@ -417,7 +417,7 @@ int kal_fs_set_modified(kal_file f, kal_u64 modified_ns) {
 
 // The modification time of a NAME, including a directory. Version 0.10.
 //
-// ⚠️ AND THE OPEN IS NOT `kal_fs_open''S. That one names `FILE_NON_DIRECTORY_FILE'
+// AND THE OPEN IS NOT `kal_fs_open''S. That one names `FILE_NON_DIRECTORY_FILE'
 // --- correctly, since it opens a FILE --- and a directory is exactly what this
 // declaration exists to reach. Opening for the attribute alone also means a
 // caller need not be able to write the contents to stamp them, which is what
@@ -443,13 +443,34 @@ int kal_fs_set_modified_at(kal_dir base, const char* name, kal_uintptr len,
     return okw::ok(w) ? kal_ok : okw::translate_nt(w);
 }
 
+// Whether a NAME's node may be started, version 0.13.
+//
+// Not claimed here. This system decides whether an image may be started from
+// its form at the moment it is started (kal_process_spawn, through
+// CreateProcessW) rather than from a property a volume records; NTFS and the
+// FAT family have no such record, and inventing one here would be a
+// simulation clause 3.1 forbids rather than an answer this environment gives.
+// KAL_FS_PROP_EXECUTABLE is therefore never in kal_fs_props, and every valid
+// request is refused with kal_err_not_supported, which is what the header
+// states for an implementation that does not claim the position.
+//
+// The arguments are still validated: an invalid directory or an unacceptable
+// name is kal_err_invalid, exactly as the operations beside this one refuse
+// them, before the volume is asked whether it could perform the rest.
+int kal_fs_set_executable_at(kal_dir base, const char* name, kal_uintptr len,
+                             int) {
+    void* root = dir_handle(base);
+    if (!root || !okw::acceptable(name, len)) return kal_err_invalid;
+    return kal_err_not_supported;
+}
+
 // --- exclusion upon a range of a file ---------------------------------------
 //
-// ⭐ THIS SYSTEM EXCLUDES PER HANDLE, WHICH IS WHAT openkal STATES. The other
+// THIS SYSTEM EXCLUDES PER HANDLE, WHICH IS WHAT openkal STATES. The other
 // two kernels carry an older form held by the PROCESS and have to reach past it;
 // here there is nothing to reach past.
 //
-// ⚠️ AND THIS SYSTEM'S EXCLUSION IS MANDATORY RATHER THAN ADVISORY: a write that
+// AND THIS SYSTEM'S EXCLUSION IS MANDATORY RATHER THAN ADVISORY: a write that
 // crosses a locked range is refused by the system, where elsewhere it is refused
 // only to a program that asked. That is a difference a caller can observe, and
 // it is the environment's own; nothing here can or should simulate the weaker
@@ -489,7 +510,7 @@ int kal_fs_unlock(kal_file f, kal_u64 start, kal_u64 len) {
 
 // How much the volume holds, in bytes.
 //
-// ⚠️ `available' AND NOT `total free'. This system reports the units this
+// `available' AND NOT `total free'. This system reports the units this
 // CALLER may use, which is the question openkal asks; a quota makes the two
 // differ and the larger of them is not an answer a program can act upon.
 int kal_fs_capacity(kal_dir d, kal_u64* total, kal_u64* available) {
@@ -659,7 +680,7 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter,
 // may be otherwise --- and a word per implementation could state neither.
 // Whether the environment beneath actually performs a lock.
 //
-// ⚠️ ASKED ON A DIRECTORY, WHICH IS NOT A THING THIS SYSTEM LOCKS --- and that is
+// ASKED ON A DIRECTORY, WHICH IS NOT A THING THIS SYSTEM LOCKS --- and that is
 // what makes the question answerable without disturbing anything. A system that
 // implements the operation refuses a directory as a wrong request; one that has
 // not implemented it says so with a different value, and that difference is the
@@ -692,7 +713,7 @@ static bool locking_available() {
 
 kal_uintptr kal_fs_props(kal_dir d) {
     void* h = dir_handle(d);
-    // ⚠️⚠️ LOCKING IS ASKED ABOUT RATHER THAN ASSUMED, AND THE REASON IS NOT
+    // LOCKING IS ASKED ABOUT RATHER THAN ASSUMED, AND THE REASON IS NOT
     // THE VOLUME.
     //
     // This system locks a byte range, and the three continuous-integration rows
@@ -700,7 +721,7 @@ kal_uintptr kal_fs_props(kal_dir d) {
     // the result under an emulator of this system --- which EXPORTS the call and
     // answers `STATUS_NOT_IMPLEMENTED' when it is made.
     //
-    // ⭐ So the property is not a property of the volume here, nor of the
+    // So the property is not a property of the volume here, nor of the
     // format: it is a property of what is beneath the program at the moment it
     // asks. A word that claimed the position regardless would be describing the
     // INTERFACE rather than the environment --- and the whole purpose of a
@@ -721,7 +742,7 @@ kal_uintptr kal_fs_props(kal_dir d) {
     kal_uintptr p = conservative;
     if (a.info.attributes & okw::fs_case_sensitive_search) p |= KAL_FS_PROP_CASE_SENSITIVE;
 
-    // ⚠️ LINKS ARE REPORTED AND ARE NOT MADE, AND THE ASYMMETRY IS THIS
+    // LINKS ARE REPORTED AND ARE NOT MADE, AND THE ASYMMETRY IS THIS
     // IMPLEMENTATION'S RATHER THAN THE SPECIFICATION'S.
     //
     // A volume that supports reparse points holds nodes whose content is

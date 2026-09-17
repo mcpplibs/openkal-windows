@@ -14,7 +14,7 @@ namespace okw {
 
 // ── the network's own error values ──────────────────────────────────────────
 //
-// ⚠️ A SECOND MAPPING, AND NOT AN ALTERNATIVE SPELLING OF THE FIRST. Every
+// A SECOND MAPPING, AND NOT AN ALTERNATIVE SPELLING OF THE FIRST. Every
 // other call in this implementation reports through `GetLastError'; these
 // report through `WSAGetLastError', and the numbering does not overlap ---
 // every value below is ten thousand and something. Passing one of them to
@@ -48,7 +48,7 @@ inline int translate_wsa(int e) {
         case WSAENETUNREACH: case WSAENETDOWN:         return kal_err_not_found;
         case WSAEADDRINUSE:                            return kal_err_exists;
         case WSAEMFILE:                                return kal_err_no_space;
-        // ⚠️ NOT `kal_err_not_supported'. `WSANOTINITIALISED' means this
+        // NOT `kal_err_not_supported'. `WSANOTINITIALISED' means this
         // implementation failed to start the network interface, which is a
         // fault of this implementation and not an absence of the facility ---
         // reporting it as unsupported would tell a caller to stop asking.
@@ -59,24 +59,24 @@ inline int translate_wsa(int e) {
 
 // ── reaching this system's network interface ────────────────────────────────
 //
-// ⚠️⚠️ RESOLVED AT RUN TIME RATHER THAN LINKED, AND src/win32.h RECORDS THE
+// RESOLVED AT RUN TIME RATHER THAN LINKED, AND src/win32.h RECORDS THE
 // MEASUREMENT: this library's names are the BSD names, the C library above this
 // implementation defines the same names, and an import library puts both
 // definitions in one program. Nothing of ws2_32 enters this program's symbol
 // table now.
 //
-// ⚠️ IT ALSO HAS TO BE STARTED. Every socket call fails with
+// IT ALSO HAS TO BE STARTED. Every socket call fails with
 // `WSANOTINITIALISED' until `WSAStartup' has been called in this image, and
 // openkal has no operation a program calls first --- so the first operation
 // that needs the interface starts it.
 //
-// ⭐ NOT A FUNCTION-LOCAL STATIC WITH A RUNTIME INITIALISER, AND THE MANIFEST
+// NOT A FUNCTION-LOCAL STATIC WITH A RUNTIME INITIALISER, AND THE MANIFEST
 // SAYS WHY: every static in this package is initialised by a constant, so no
 // guard variable is emitted. One with a runtime initialiser would emit a call
 // to `__cxa_guard_acquire' --- a C runtime symbol, in the one package whose
 // continuous integration asserts it references none.
 //
-// ⚠️ THE TABLE IS READ AND WRITTEN WITHOUT SYNCHRONISATION, AND THAT IS SAFE
+// THE TABLE IS READ AND WRITTEN WITHOUT SYNCHRONISATION, AND THAT IS SAFE
 // HERE RATHER THAN OVERLOOKED. Two contexts racing resolve the same pointers
 // from the same library to the same values and perform a second `WSAStartup',
 // which this system reference-counts and documents as callable more than once.
@@ -98,6 +98,9 @@ struct network_calls {
     pfn_sendto          send_to;
     pfn_recvfrom        recv_from;
     pfn_WSAPoll         poll;
+    // Version 0.13: the overlapped forms, for a datagram's send and receive.
+    pfn_WSASendTo       send_to_ov;
+    pfn_WSARecvFrom     recv_from_ov;
 };
 
 inline network_calls& net_calls() {
@@ -105,7 +108,7 @@ inline network_calls& net_calls() {
     return c;
 }
 
-// ⚠️ THE LIBRARY'S NAME IS WRITTEN AS WIDE CHARACTERS BY HAND. This package has
+// THE LIBRARY'S NAME IS WRITTEN AS WIDE CHARACTERS BY HAND. This package has
 // no C library to take a literal converter from, and `L"ws2_32.dll"' is the
 // language's own; it is spelled out so that no header is needed for it.
 inline bool ensure_network() {
@@ -132,14 +135,17 @@ inline bool ensure_network() {
     c.send_to    = reinterpret_cast<pfn_sendto>(at("sendto"));
     c.recv_from  = reinterpret_cast<pfn_recvfrom>(at("recvfrom"));
     c.poll       = reinterpret_cast<pfn_WSAPoll>(at("WSAPoll"));
+    c.send_to_ov   = reinterpret_cast<pfn_WSASendTo>(at("WSASendTo"));
+    c.recv_from_ov = reinterpret_cast<pfn_WSARecvFrom>(at("WSARecvFrom"));
 
-    // ⚠️ EVERY ONE OF THEM, OR NONE. A table with one null entry is worse than
+    // EVERY ONE OF THEM, OR NONE. A table with one null entry is worse than
     // no table: the operations that resolved would work and the one that did
     // not would call through zero, which is the failure clause 6.1 exists to
     // turn into a link error and this arrangement cannot.
     if (!start || !c.last_error || !c.socket || !c.close || !c.bind ||
         !c.listen || !c.accept || !c.connect || !c.shutdown || !c.sockname ||
-        !c.peername || !c.send_to || !c.recv_from || !c.poll) {
+        !c.peername || !c.send_to || !c.recv_from || !c.poll ||
+        !c.send_to_ov || !c.recv_from_ov) {
         c.ready = -1;
         return false;
     }
@@ -150,7 +156,7 @@ inline bool ensure_network() {
     return true;
 }
 
-// The error this system last reported for a socket operation. ⚠️ Reached through
+// The error this system last reported for a socket operation. Reached through
 // the table, so a caller that failed BEFORE the table was built --- which is the
 // only way `ensure_network' returns false --- is told `kal_err_io' rather than
 // calling through a null pointer.
@@ -161,11 +167,34 @@ inline int last_socket_error() {
 }
 
 // The table, or a null pointer when this system's network interface could not
-// be reached at all. ⚠️ Every operation of both interfaces begins here, so a
+// be reached at all. Every operation of both interfaces begins here, so a
 // system without `ws2_32.dll' --- which is not a system this package expects to
 // meet --- reports `kal_err_io' rather than calling through zero.
 inline network_calls* net_or_null() {
     return ensure_network() ? &net_calls() : nullptr;
+}
+
+// Whether a stream handle is a socket, version 0.13. GetFileType reports
+// FILE_TYPE_PIPE for both a socket and an ordinary named pipe on this system,
+// so the two cannot be told apart by that alone; getsockname succeeds only
+// upon a socket, and every socket this implementation hands out has been
+// connected, bound or accepted, so it always answers one.
+//
+// GetFileType IS ASKED FIRST. openkal.stream's transfer operations are called
+// for every stream, not only a socket's, and the ordinary case — a file, the
+// console, a pipe this implementation did not make into a socket — never
+// touches the network interface at all. Asking getsockname first would load
+// and start it (LoadLibraryW, WSAStartup) on every read or write of any
+// stream; asking it only for a handle already reported as FILE_TYPE_PIPE
+// confines that cost to what a socket and a real pipe share and nothing else
+// does.
+inline bool is_socket_handle(void* h) {
+    if (h == nullptr || GetFileType(h) != FILE_TYPE_PIPE) return false;
+    auto* n = net_or_null();
+    if (n == nullptr) return false;
+    ksockaddr_storage ss{};
+    int len = static_cast<int>(sizeof ss);
+    return n->sockname(reinterpret_cast<SOCKET>(h), &ss, &len) == 0;
 }
 
 // ── addresses ───────────────────────────────────────────────────────────────

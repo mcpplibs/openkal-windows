@@ -1,13 +1,13 @@
 import mcpp;
 import std;
 
-// ⭐⭐ WHERE THIS SYSTEM'S NAMES LIVE, PUT ON THE CONSUMER'S LINK LINE.
+// WHERE THIS SYSTEM'S NAMES LIVE, PUT ON THE CONSUMER'S LINK LINE.
 //
 // `src/win32.h` and `src/win.h` freed the COMPILE from a vendor SDK. The LINK
 // was still reaching for `libkernel32.a` and its three neighbours — files that
 // exist on a machine with mingw installed and nowhere else.
 //
-// ⚠️ Measured 2026-08-22 on a clean CI runner, after every object compiled:
+// Measured 2026-08-22 on a clean CI runner, after every object compiled:
 //
 //     lld: error: unable to find library -lkernel32
 //     lld: error: unable to find library -lntdll
@@ -18,11 +18,11 @@ import std;
 // repository has recorded that shape before: a green that came from history the
 // new machine does not have.
 //
-// ⭐ An import library is a LIST OF NAMES, not code — which is why generating
+// An import library is a LIST OF NAMES, not code — which is why generating
 // one from `port/*.def` is a complete substitute rather than an approximation,
 // the same reason `openkal-macos/port/libSystem.tbd` is one for that system.
 //
-// ⚠️⚠️ AND ONLY WHERE THE SYSTEM'S OWN ARE ABSENT.
+// AND ONLY WHERE THE SYSTEM'S OWN ARE ABSENT.
 //
 // On this system they are present, they are the vendor's, and they list every
 // name rather than the forty-five this implementation calls. `-L` is searched
@@ -34,9 +34,9 @@ import std;
 
 namespace {
 
-// ⭐⭐ WHICH COMPILER FAMILY RESOLVED — AND WHAT AN ABSENT ANSWER MEANS.
+// WHICH COMPILER FAMILY RESOLVED — AND WHAT AN ABSENT ANSWER MEANS.
 //
-// ⚠️ READ FROM THE ENVIRONMENT, NOT THROUGH A HELPER. A build program is
+// READ FROM THE ENVIRONMENT, NOT THROUGH A HELPER. A build program is
 // compiled against the `mcpp` module of whichever tool RUNS it, so naming a
 // helper newer than the released tool makes this package require an unreleased
 // one. Measured 2026-08-22, on every row of three repositories at once:
@@ -48,12 +48,12 @@ namespace {
 // the FALLBACK written for the first. The environment variables are the
 // contract and `std::getenv` reads them on every version.
 //
-// ⚠️ AND AN ABSENT VALUE IS NOT "NO COMPILER". Measured against mcpp 2026.8.19.1,
+// AND AN ABSENT VALUE IS NOT "NO COMPILER". Measured against mcpp 2026.8.19.1,
 // which is what CI installs: `MCPP_TARGET_OS`, `MCPP_HOST`, `MCPP_OUT_DIR`,
 // `MCPP_MANIFEST_DIR`, `MCPP_TARGET` and `MCPP_TARGET_ARCH` are all set, and
 // `MCPP_COMPILER` and `MCPP_TOOLCHAIN_DIR` are absent.
 //
-// ⭐ So absent means "a build tool from before the question could be asked" —
+// So absent means "a build tool from before the question could be asked" —
 // and such a tool cannot produce the configuration the answer would change. The
 // clang-over-openkal cross to PE arrives on the same release as the variable.
 // The one configuration a tool that predates it can produce is the GCC one, so
@@ -75,17 +75,17 @@ bool host_is_windows() {
 
 // The tool that turns a `.def` into an import library.
 //
-// ⚠️ ITS NAME IS A PROPERTY OF THE COMPILER FAMILY, NOT OF THE PACKAGE. LLVM
+// ITS NAME IS A PROPERTY OF THE COMPILER FAMILY, NOT OF THE PACKAGE. LLVM
 // spells it `llvm-dlltool`; binutils spells it `dlltool`, and a cross binutils
 // prefixes it with the triple. Measured 2026-08-22 — this file named only the
 // first, and the row of CI that builds with a GCC toolchain said:
 //
 //     sh: 1: llvm-dlltool: not found
 //
-// ⭐ So the family is ASKED for rather than assumed — see `compiler_family()`
+// So the family is ASKED for rather than assumed — see `compiler_family()`
 // above for how, and why it is not `mcpp::compiler()`.
 //
-// ⚠️ Asked for rather than DECLARED, too: a package that put `xim:llvm` in its
+// Asked for rather than DECLARED, too: a package that put `xim:llvm` in its
 // dependencies would pin itself to one implementation of the toolchain.
 std::string dlltool() {
     const std::string dir = env_or_empty("MCPP_TOOLCHAIN_DIR");
@@ -120,7 +120,7 @@ int main() {
 
     if (host_is_windows()) return 0;
 
-    // ⭐⭐ AND ONLY UNDER CLANG, WHICH IS THE OTHER HALF OF THE SAME FACT.
+    // AND ONLY UNDER CLANG, WHICH IS THE OTHER HALF OF THE SAME FACT.
     //
     // A GCC toolchain for this format IS a mingw payload, and a mingw payload
     // carries these four libraries — complete ones, with every name rather than
@@ -142,7 +142,7 @@ int main() {
                        "bcrypt" }) {
         const auto def = std::format("{}/port/{}.def", root, name);
         const auto lib = std::format("{}/lib{}.a", out, name);
-        // ⚠️ `-m i386:x86-64` is stated. See port/README.md: the 32-bit ABI
+        // `-m i386:x86-64` is stated. See port/README.md: the 32-bit ABI
         // would need `@N` decoration on these names, which is a property of
         // that ABI rather than of the list.
         const auto cmd = std::format(
