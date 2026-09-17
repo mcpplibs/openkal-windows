@@ -1,7 +1,7 @@
 [package]
 namespace   = "mcpplibs"
 name        = "openkal-windows"
-version     = "0.7.4"
+version     = "0.8.0"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
 
@@ -18,7 +18,7 @@ authors     = ["mcpplibs"]
 repo        = "https://github.com/mcpplibs/openkal-windows"
 
 [dependencies]
-openkal = "0.12.0"
+openkal = "0.13.0"
 
 # The package contributes definitions and no modules. The interface it
 # implements is declared by the specification package, which this package
@@ -38,7 +38,7 @@ openkal = "0.12.0"
 # the linker and the other as an input file. Naming them once in the spelling of
 # either would make this package build under two of the three toolchains it is
 # written for.
-# ⚠️ THE PREDICATE IS THE OBJECT ABI, NOT THE C LIBRARY.
+# THE PREDICATE IS THE OBJECT ABI, NOT THE C LIBRARY.
 #
 # These four are Win32 import libraries — a property of the platform interface
 # this package implements. `env = "gnu"` was standing in for "the GNU/PE ABI
@@ -66,7 +66,7 @@ ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt"
 # toolchains that reach it would not recognise these spellings, and openkal has
 # nothing to say about how a program that has a runtime unwinds.
 #
-# ⚠️ AND NO LOOP IS REPLACED BY A CALL, WHICH IS WHAT `-fno-builtin` IS FOR.
+# AND NO LOOP IS REPLACED BY A CALL, WHICH IS WHAT `-fno-builtin` IS FOR.
 #
 # An optimizing compiler recognises a loop that counts to a terminator and
 # emits a call to the library function that does the same. `wide_length` in

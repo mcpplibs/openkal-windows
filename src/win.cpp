@@ -55,7 +55,19 @@ int translate_win32(unsigned long e) {
         case ERROR_ALREADY_EXISTS:          return kal_err_exists;
         case ERROR_DIR_NOT_EMPTY:           return kal_err_not_empty;
         case ERROR_DIRECTORY:               return kal_err_not_directory;
-        // ⚠️⚠️ A LOCK THAT ANOTHER HOLDER HAS IS `AGAIN' AND NOT AN
+        // A name that exists and is not a form this loader can start. Version
+        // 0.13, kal_err_not_program. Measured under Wine: CreateProcessW upon a
+        // text file with no recognised extension reports ERROR_BAD_EXE_FORMAT.
+        // ERROR_EXE_MACHINE_TYPE_MISMATCH is this loader's documented report for
+        // an image built for a different processor, which is the same condition
+        // under a different cause; ERROR_EXE_MARKED_INVALID and
+        // ERROR_INVALID_EXE_SIGNATURE belong to the same header-validation
+        // family and are mapped with it rather than left to fall to kal_err_io.
+        case ERROR_INVALID_EXE_SIGNATURE:
+        case ERROR_EXE_MARKED_INVALID:
+        case ERROR_BAD_EXE_FORMAT:
+        case ERROR_EXE_MACHINE_TYPE_MISMATCH: return kal_err_not_program;
+        // A LOCK THAT ANOTHER HOLDER HAS IS `AGAIN' AND NOT AN
         // INPUT-OUTPUT FAILURE, and this line is missing from every earlier
         // release because nothing here took a lock until openkal 0.10.
         //
@@ -65,7 +77,7 @@ int translate_win32(unsigned long e) {
         // device rather than a conflict with another holder --- and a caller
         // reading that would stop rather than retry.
         //
-        // ⭐ It is distinct from ERROR_SHARING_VIOLATION above, which stays
+        // It is distinct from ERROR_SHARING_VIOLATION above, which stays
         // `permission': that one is a conflict over how a file was OPENED and
         // is not resolved by asking again.
         case ERROR_LOCK_VIOLATION:          return kal_err_again;

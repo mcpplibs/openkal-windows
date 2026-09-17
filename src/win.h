@@ -26,13 +26,13 @@
 // one layer down, there is nothing to resolve.
 #pragma once
 
-// ⭐ THIS SYSTEM'S INTERFACE, DECLARED BY THIS PACKAGE.
+// THIS SYSTEM'S INTERFACE, DECLARED BY THIS PACKAGE.
 //
 // It used to be `<windows.h>` and `<shellapi.h>` — a vendor SDK that had to be
 // found somewhere, and "somewhere" turned out to be whichever copy the machine
 // happened to have. win32.h records the measurement and the method.
 //
-// ⚠️ AND THE ARGUMENT IS THE ONE THIS FILE ALREADY MAKES, ten lines down, about
+// AND THE ARGUMENT IS THE ONE THIS FILE ALREADY MAKES, ten lines down, about
 // `<winternl.h>`. That argument was always the same argument; it had only been
 // applied to the half where one TOOLCHAIN disagrees with another, and not to
 // the half where one MACHINE disagrees with another.
@@ -188,7 +188,7 @@ enum : unsigned long {
 };
 
 extern "C" {
-// ⚠️ `dllimport` HERE TOO, AND IT IS THE SAME FACT AS IN `win32.h`.
+// `dllimport` HERE TOO, AND IT IS THE SAME FACT AS IN `win32.h`.
 //
 // These live in `ntdll.dll`. Omitting the attribute still links — the linker
 // synthesises a thunk through the import table — but it changes what the OBJECT
@@ -222,7 +222,7 @@ __declspec(dllimport) long __stdcall NtQueryDirectoryFile(void* handle, void* ev
                                     unsigned char restart);
 __declspec(dllimport) long __stdcall NtFlushBuffersFile(void* handle, io_status_block* status);
 
-// ⭐ EXCLUSION IS PER-HANDLE ON THIS SYSTEM, which is exactly what openkal
+// EXCLUSION IS PER-HANDLE ON THIS SYSTEM, which is exactly what openkal
 // states: the holder is the `kal_file'. There is no second, process-held form
 // to avoid here --- the thing the other two kernels have to reach past.
 __declspec(dllimport) long __stdcall NtLockFile(void* handle, void* event, void* apc, void* apc_context,
@@ -236,7 +236,7 @@ __declspec(dllimport) unsigned long __stdcall RtlNtStatusToDosError(long status)
 
 inline bool ok(long status) { return status >= 0; }
 
-// ⚠️ AN ENQUIRY THAT REPORTS AN OVERFLOW HAS STILL ANSWERED. STATUS_BUFFER_OVERFLOW
+// AN ENQUIRY THAT REPORTS AN OVERFLOW HAS STILL ANSWERED. STATUS_BUFFER_OVERFLOW
 // is a warning rather than an error: the fixed part of the structure was written
 // and a variable-length tail was cut. `ok' correctly says no to it --- its sign
 // bit is set --- so a caller that reads only fields preceding the tail names it
@@ -245,7 +245,7 @@ inline bool ok(long status) { return status >= 0; }
 // reported to have the same identity.
 inline constexpr long status_buffer_overflow = static_cast<long>(0x80000005ul);
 
-// ⚠️ AN ENVIRONMENT MAY EXPORT A NAME AND NOT IMPLEMENT WHAT IT NAMES, and the
+// AN ENVIRONMENT MAY EXPORT A NAME AND NOT IMPLEMENT WHAT IT NAMES, and the
 // two are distinguishable only by this value. It is what a capability word has
 // to consult before claiming a position: an operation whose export resolves and
 // whose call answers this cannot be performed here, and a word claiming it would

@@ -11,7 +11,7 @@
 // on the other system. The interface states the narrower contract and this
 // implementation keeps to it.
 //
-// ⭐ THE THIRD CALL IS NOT OPTIONAL AND IS NOT PRESENT ON THE OTHER TWO SYSTEMS'
+// THE THIRD CALL IS NOT OPTIONAL AND IS NOT PRESENT ON THE OTHER TWO SYSTEMS'
 // IMPLEMENTATIONS. A processor whose instruction path does not observe the data
 // path's writes must be told; this system publishes an operation for exactly
 // that and documents it as required after writing code into memory. On the
@@ -54,7 +54,7 @@ int kal_exec_publish(void* p, kal_uintptr size) {
 
 void kal_exec_free(void* p, kal_uintptr size) {
     if (p == nullptr || size == 0) return;
-    // ⚠️ THE SIZE IS ZERO AND THAT IS NOT AN OVERSIGHT. This system's release
+    // THE SIZE IS ZERO AND THAT IS NOT AN OVERSIGHT. This system's release
     // takes a size of zero with `MEM_RELEASE' and refuses any other value: the
     // region released is the whole of the one that was reserved, which is what
     // this operation means. Passing the caller's size would fail with an

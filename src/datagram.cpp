@@ -9,6 +9,12 @@
 // datagram through it would lose the property that distinguishes this interface.
 // The packing is the same, the type is not, and the type is what prevents the
 // mistake.
+//
+// SENDING AND RECEIVING GO THROUGH `WSASendTo'/`WSARecvFrom' WITH AN
+// `OVERLAPPED' OF THEIR OWN, VERSION 0.13, FOR THE REASON src/net.cpp STATES:
+// the socket is made overlapped, so a synchronous call sharing the handle's one
+// completion event would contend with a transfer in the other direction upon
+// it. `kal_datagram_open' makes the socket with `WSA_FLAG_OVERLAPPED'.
 
 namespace {
 
@@ -22,6 +28,52 @@ bool bad(SOCKET s) { return s == INVALID_SOCKET; }
 // `int', and a datagram larger than that cannot exist, so the clamp is a
 // statement about the type rather than a limit this implementation imposes.
 constexpr kal_uintptr kMaxOne = 0x7fffffffu;
+
+// One overlapped operation upon the socket: an event of its own, issued and
+// waited for synchronously. `err' carries the WSA error when this reports
+// failure; a caller that must translate it uses okw::translate_wsa.
+//
+// A DATAGRAM TOO LARGE FOR THE BUFFER IS REPORTED TWO WAYS, AND BOTH ARE
+// NORMALISED TO ONE HERE. `WSARecvFrom' that fails immediately is read through
+// `WSAGetLastError', which gives `WSAEMSGSIZE' --- the Winsock-specific value
+// the rest of this file already expects. One that goes pending completes with
+// `STATUS_BUFFER_OVERFLOW', and `GetOverlappedResult' reports that through the
+// generic channel as `ERROR_MORE_DATA', a different number for the same
+// condition. Measured on windows-2022, where the pending path is the one this
+// operation actually takes: the immediate path was never reached in that
+// measurement, and reporting `ERROR_MORE_DATA' unnormalised left the
+// truncation this interface is required to report as a success reported as an
+// unrecognised failure instead.
+bool overlapped_once(SOCKET s, bool send, WSABUF_& wsabuf, DWORD flags,
+                     void* addr, int* addrlen, DWORD* moved, int* err) {
+    auto* n = okw::net_or_null();
+    if (n == nullptr) { *err = 0; return false; }
+    HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (ev == nullptr) { *err = 0; return false; }
+    OVERLAPPED ov{};
+    ov.hEvent = ev;
+    const int rc = send
+        ? n->send_to_ov(s, &wsabuf, 1, moved, flags,
+                        addr, addrlen ? *addrlen : 0, &ov, nullptr)
+        : n->recv_from_ov(s, &wsabuf, 1, moved, &flags,
+                          addr, addrlen, &ov, nullptr);
+    bool ok = rc == 0;
+    if (!ok) {
+        const int e = n->last_error();
+        if (e == static_cast<int>(ERROR_IO_PENDING)) {
+            ok = GetOverlappedResult(reinterpret_cast<HANDLE>(s), &ov, moved, TRUE) != 0;
+            if (!ok) {
+                const DWORD ge = GetLastError();
+                *err = ge == ERROR_MORE_DATA ? static_cast<int>(okw::WSAEMSGSIZE)
+                                             : static_cast<int>(ge);
+            }
+        } else {
+            *err = e;
+        }
+    }
+    CloseHandle(ev);
+    return ok;
+}
 
 }  // namespace
 
@@ -42,7 +94,8 @@ int kal_datagram_open(const kal_endpoint* local, kal_datagram* out) {
 
     auto* n = net();
     if (n == nullptr) return kal_err_io;
-    const SOCKET s = n->socket(family, SOCK_DGRAM_, IPPROTO_UDP_, nullptr, 0, 0);
+    const SOCKET s = n->socket(family, SOCK_DGRAM_, IPPROTO_UDP_, nullptr, 0,
+                               WSA_FLAG_OVERLAPPED_);
     if (bad(s)) return okw::last_socket_error();
 
     if (local != nullptr) {
@@ -83,16 +136,17 @@ kal_intptr kal_datagram_send_to(kal_datagram d, const void* buf, kal_uintptr len
     if (bad(s) || to == nullptr) return -kal_err_invalid;
     if (len > kMaxOne) return -kal_err_invalid;
 
-    auto* n = net();
-    if (n == nullptr) return -kal_err_io;
     ksockaddr_storage ss{};
     int addrlen = 0;
     if (const int rc = okw::to_system(*to, ss, addrlen); rc != kal_ok)
         return -rc;
 
-    const int r = n->send_to(s, static_cast<const char*>(buf), static_cast<int>(len),
-                             0, &ss, addrlen);
-    if (r < 0) return -okw::last_socket_error();
+    WSABUF_ wsabuf{ static_cast<DWORD>(len),
+                    const_cast<char*>(static_cast<const char*>(buf)) };
+    DWORD sent = 0;
+    int err = 0;
+    if (!overlapped_once(s, true, wsabuf, 0, &ss, &addrlen, &sent, &err))
+        return -okw::translate_wsa(err);
 
     // A MESSAGE IS SENT WHOLE OR NOT AT ALL, which is what this interface
     // states. The system reports a count anyway; a count short of the length
@@ -100,8 +154,8 @@ kal_intptr kal_datagram_send_to(kal_datagram d, const void* buf, kal_uintptr len
     // it does not do. Reporting the short count as success would give a caller a
     // partial send this interface says cannot occur, so it is reported as a
     // failure of the medium instead.
-    const kal_uintptr sent = static_cast<kal_uintptr>(r);
-    return sent == len ? static_cast<kal_intptr>(sent) : -kal_err_io;
+    const kal_uintptr moved = static_cast<kal_uintptr>(sent);
+    return moved == len ? static_cast<kal_intptr>(moved) : -kal_err_io;
 }
 
 kal_intptr kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
@@ -110,15 +164,14 @@ kal_intptr kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
     if (bad(s)) return -kal_err_invalid;
     if (len > kMaxOne) len = kMaxOne;
 
-    auto* n = net();
-    if (n == nullptr) return -kal_err_io;
     ksockaddr_storage ss{};
     int addrlen = static_cast<int>(sizeof ss);
 
-    const int r = n->recv_from(s, static_cast<char*>(buf), static_cast<int>(len),
-                               0, &ss, &addrlen);
-    if (r < 0) {
-        // ⚠️ THE ONE FAILURE THIS SYSTEM REPORTS THAT THE OTHER TWO DO NOT.
+    WSABUF_ wsabuf{ static_cast<DWORD>(len), static_cast<char*>(buf) };
+    DWORD got = 0;
+    int err = 0;
+    if (!overlapped_once(s, false, wsabuf, 0, &ss, &addrlen, &got, &err)) {
+        // THE ONE FAILURE THIS SYSTEM REPORTS THAT THE OTHER TWO DO NOT.
         //
         // A message longer than the buffer is truncated here AND reported as a
         // failure --- `WSAEMSGSIZE' --- where the other two systems truncate
@@ -131,7 +184,7 @@ kal_intptr kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
         //
         // The count is not recoverable from this call, so what is reported is
         // the whole of the buffer, which is what was filled.
-        if (n->last_error() == okw::WSAEMSGSIZE) {
+        if (err == okw::WSAEMSGSIZE) {
             if (from != nullptr && okw::from_system(ss, *from) != kal_ok) {
                 for (auto& b : from->addr) b = 0;
                 from->addr_len = 0;
@@ -142,7 +195,7 @@ kal_intptr kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
             // caller may read.
             return static_cast<kal_intptr>(len);
         }
-        return -okw::last_socket_error();
+        return -okw::translate_wsa(err);
     }
 
     if (from != nullptr) {
@@ -155,7 +208,7 @@ kal_intptr kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
             from->port     = 0;
         }
     }
-    return static_cast<kal_intptr>(r);
+    return static_cast<kal_intptr>(got);
 }
 
 void kal_datagram_close(kal_datagram d) {

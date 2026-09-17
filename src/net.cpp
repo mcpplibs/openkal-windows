@@ -10,14 +10,19 @@
 // it yields is the socket itself, because a socket IS a handle on this system
 // and openkal.stream's operations here are `ReadFile' and `WriteFile'.
 //
-// ⭐⭐ THAT LAST SENTENCE IS THE WHOLE REASON THIS IMPLEMENTATION NEEDS NO
-// SECOND TRANSFER PATH, AND IT IS TRUE ONLY BECAUSE OF THE FLAGS WORD PASSED TO
-// `WSASocketW'. The ordinary `socket' makes an OVERLAPPED handle, whose reads
-// and writes complete asynchronously; `ReadFile' upon one of those returns
-// before the bytes have arrived. A flags word of zero makes a socket that is
-// not overlapped, and the two calls then behave exactly as they do upon a pipe.
-// This is stated here rather than left in the argument list because a change to
-// that one zero would not fail to compile and would not fail to link.
+// THE SOCKET IS MADE OVERLAPPED (WSA_FLAG_OVERLAPPED), AND VERSION 0.13
+// REQUIRES IT. A synchronous handle on this system has one completion event
+// shared by every operation upon it; two synchronous transfers issued from two
+// contexts contend for that one event regardless of which direction each is
+// in, so a read blocked waiting for the peer held back a write the peer was
+// waiting for on the same connection --- clause 6.6 forbids exactly that.
+// `ReadFile' and `WriteFile' upon the overlapped socket therefore each carry an
+// `OVERLAPPED' of their own (src/stream.cpp), so the two directions no longer
+// share anything to contend over. An earlier revision made the socket
+// non-overlapped instead, on the reasoning that it would then behave exactly as
+// a pipe does upon `ReadFile'; measured against two contexts and a bound, a
+// write on one waited for a read blocked on the other, which is the connection
+// clause 6.6 exists to rule out.
 
 namespace {
 
@@ -30,7 +35,8 @@ okw::network_calls* net() { return okw::net_or_null(); }
 
 SOCKET make(int family, int type, int protocol) {
     auto* n = net();
-    return n ? n->socket(family, type, protocol, nullptr, 0, 0) : INVALID_SOCKET;
+    return n ? n->socket(family, type, protocol, nullptr, 0, WSA_FLAG_OVERLAPPED_)
+             : INVALID_SOCKET;
 }
 
 int report_address(bool peer, SOCKET s, kal_endpoint* out) {
@@ -88,7 +94,7 @@ int kal_net_listen(const kal_endpoint* local, kal_net_listener* out) {
     const SOCKET s = make(family, SOCK_STREAM_, IPPROTO_TCP_);
     if (bad(s)) return okw::last_socket_error();
 
-    // ⚠️ SO_REUSEADDR DOES NOT MEAN HERE WHAT IT MEANS ON THE OTHER TWO SYSTEMS,
+    // SO_REUSEADDR DOES NOT MEAN HERE WHAT IT MEANS ON THE OTHER TWO SYSTEMS,
     // AND THAT IS WHY IT IS NOT SET.
     //
     // There it permits a listener whose predecessor is lingering. Here it
@@ -131,9 +137,9 @@ int kal_net_accept(kal_net_listener l, kal_net_conn* out) {
     const SOCKET c = n->accept(s, nullptr, nullptr);
     if (bad(c)) return okw::last_socket_error();
 
-    // ⚠️ A CONNECTION INHERITS THE LISTENER'S PROPERTIES AND NOT ITS FLAGS WORD.
-    // The listener was made non-overlapped; an accepted connection is
-    // non-overlapped too, which is what keeps `ReadFile' synchronous upon it.
+    // A CONNECTION INHERITS THE LISTENER'S PROPERTIES. The listener is made
+    // overlapped, and an accepted connection is overlapped too --- which is what
+    // src/stream.cpp's transfer path upon it relies upon.
     out->h = okw::pack_socket(c);
     if (out->h == 0) { n->close(c); return kal_err_no_memory; }
     return kal_ok;

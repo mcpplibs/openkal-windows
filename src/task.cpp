@@ -104,12 +104,12 @@ int kal_task_wait(const kal_u32* word, kal_u32 expected,
 
 // How many contexts can run at the same moment. Version 0.10.
 //
-// ⚠️ Added because its absence was a WRONG ANSWER and not a refusal: the
+// Added because its absence was a WRONG ANSWER and not a refusal: the
 // property word says whether contexts run at once and not how many can, so a C
 // library above answered 1 with no error and a program sizing a pool of workers
 // got one worker.
 //
-// ⭐ THE ACTIVE MASK AND NOT THE COUNT FIELD. This record carries both, and they
+// THE ACTIVE MASK AND NOT THE COUNT FIELD. This record carries both, and they
 // differ whenever a program is confined to part of the machine --- which is the
 // case a program sizing itself most needs to get right.
 kal_uintptr kal_task_parallelism(void) {
