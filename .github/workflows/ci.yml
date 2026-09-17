@@ -286,7 +286,9 @@ jobs:
       # suite, which has no vocabulary for a handle outside openkal's own.
       - name: This package's own tests
         run: |
-          mcpp test 2>&1 | tee tests.log
+          extra=''
+          [ -n '${{ matrix.target }}' ] && extra='--target ${{ matrix.target }}'
+          mcpp test $extra 2>&1 | tee tests.log
           missing=0
           for f in tests/*.cpp; do
             name="$(basename "$f" .cpp)"
