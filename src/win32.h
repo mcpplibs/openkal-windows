@@ -260,6 +260,13 @@ enum : DWORD {
     ERROR_NO_DATA               = 232,
     ERROR_PIPE_NOT_CONNECTED    = 233,
     ERROR_TIMEOUT               = 1460,
+    // The generic report of what WSAEMSGSIZE is upon a synchronous completion.
+    // A datagram received through an overlapped WSARecvFrom that does not fit
+    // the buffer completes with STATUS_BUFFER_OVERFLOW, and GetOverlappedResult
+    // reports that as this value rather than as the Winsock-specific one; only
+    // WSAGetLastError, reached on the path that fails immediately, gives the
+    // latter. Version 0.13; measured on windows-2022.
+    ERROR_MORE_DATA             = 234,
     ERROR_FILE_NOT_FOUND        = 2,
     ERROR_PATH_NOT_FOUND        = 3,
     ERROR_NO_MORE_FILES         = 18,

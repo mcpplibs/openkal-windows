@@ -32,6 +32,18 @@ constexpr kal_uintptr kMaxOne = 0x7fffffffu;
 // One overlapped operation upon the socket: an event of its own, issued and
 // waited for synchronously. `err' carries the WSA error when this reports
 // failure; a caller that must translate it uses okw::translate_wsa.
+//
+// A DATAGRAM TOO LARGE FOR THE BUFFER IS REPORTED TWO WAYS, AND BOTH ARE
+// NORMALISED TO ONE HERE. `WSARecvFrom' that fails immediately is read through
+// `WSAGetLastError', which gives `WSAEMSGSIZE' --- the Winsock-specific value
+// the rest of this file already expects. One that goes pending completes with
+// `STATUS_BUFFER_OVERFLOW', and `GetOverlappedResult' reports that through the
+// generic channel as `ERROR_MORE_DATA', a different number for the same
+// condition. Measured on windows-2022, where the pending path is the one this
+// operation actually takes: the immediate path was never reached in that
+// measurement, and reporting `ERROR_MORE_DATA' unnormalised left the
+// truncation this interface is required to report as a success reported as an
+// unrecognised failure instead.
 bool overlapped_once(SOCKET s, bool send, WSABUF_& wsabuf, DWORD flags,
                      void* addr, int* addrlen, DWORD* moved, int* err) {
     auto* n = okw::net_or_null();
@@ -50,7 +62,11 @@ bool overlapped_once(SOCKET s, bool send, WSABUF_& wsabuf, DWORD flags,
         const int e = n->last_error();
         if (e == static_cast<int>(ERROR_IO_PENDING)) {
             ok = GetOverlappedResult(reinterpret_cast<HANDLE>(s), &ov, moved, TRUE) != 0;
-            if (!ok) *err = static_cast<int>(GetLastError());
+            if (!ok) {
+                const DWORD ge = GetLastError();
+                *err = ge == ERROR_MORE_DATA ? static_cast<int>(okw::WSAEMSGSIZE)
+                                             : static_cast<int>(ge);
+            }
         } else {
             *err = e;
         }
