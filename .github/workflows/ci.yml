@@ -462,6 +462,20 @@ jobs:
           test -n "$objs" || { echo "no objects were found" >&2; exit 1; }
           bash .spec/tools/check-surface.sh --complete .spec/SURFACE.txt $objs
 
+          # The array in mcpp.toml is a declaration, and a declaration is
+          # checked rather than trusted. The check is the comparison above
+          # stopped one step earlier: the walk that decides whether each group
+          # is exported whole already answers which interfaces this
+          # implementation provides, so regenerating and diffing is the same
+          # derivation rather than a second one.
+          bash .spec/tools/check-surface.sh --toml .spec/SURFACE.txt $objs > /tmp/derived.toml
+          awk '/^provides-interfaces = \[/{p=1} p{print} /^\]/{if(p)exit}' mcpp.toml > /tmp/declared.toml
+          if ! diff -u /tmp/declared.toml /tmp/derived.toml; then
+            echo "::error::mcpp.toml's provides-interfaces disagrees with the artefact"
+            exit 1
+          fi
+          echo "  ok  the declaration is the artefact's own answer"
+
       # The property this implementation exists to have. A program above openkal
       # may supply a C runtime of its own; an implementation that reached for
       # this environment's would have its calls resolve to the program's, and
