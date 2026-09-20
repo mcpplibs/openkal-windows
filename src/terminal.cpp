@@ -18,8 +18,17 @@ void* handle_of(kal_stream s) { return reinterpret_cast<void*>(s.h); }
 bool  valid(void* h) { return h != nullptr && h != INVALID_HANDLE_VALUE; }
 
 // This environment's console input flags.
-constexpr DWORD enable_line_input = 0x0002;
-constexpr DWORD enable_echo_input = 0x0004;
+constexpr DWORD enable_processed_input = 0x0001;
+constexpr DWORD enable_line_input      = 0x0002;
+constexpr DWORD enable_echo_input      = 0x0004;
+
+// KAL_TERM_PASS_CONTROL IS ENABLE_PROCESSED_INPUT, INVERTED. This environment
+// keeps the keystrokes it reserves --- the interrupt, and the pair that stops
+// and starts output --- behind one flag, so the position is set exactly when
+// that flag is clear. The two environments this specification is otherwise
+// implemented on spread the same reservation over three flags of their own;
+// what the position states is that none of them reserves anything, which is one
+// question on either side.
 
 }  // namespace
 
@@ -38,8 +47,9 @@ int kal_terminal_get_mode(kal_stream s, kal_uintptr* mode) {
     if (!GetConsoleMode(h, &m)) return kal_err_not_supported;
 
     kal_uintptr out = 0;
-    if ((m & enable_line_input) != 0) out |= KAL_TERM_LINE_EDIT;
-    if ((m & enable_echo_input) != 0) out |= KAL_TERM_ECHO;
+    if ((m & enable_line_input) != 0)      out |= KAL_TERM_LINE_EDIT;
+    if ((m & enable_echo_input) != 0)      out |= KAL_TERM_ECHO;
+    if ((m & enable_processed_input) == 0) out |= KAL_TERM_PASS_CONTROL;
     *mode = out;
     return kal_ok;
 }
@@ -60,6 +70,15 @@ int kal_terminal_set_mode(kal_stream s, kal_uintptr mode) {
     else                                  m &= ~enable_line_input;
     if ((mode & KAL_TERM_ECHO) != 0)      m |=  enable_echo_input;
     else                                  m &= ~enable_echo_input;
+    if ((mode & KAL_TERM_PASS_CONTROL) != 0) m &= ~enable_processed_input;
+    else                                     m |=  enable_processed_input;
+
+    // THE POSITION IS ONE FLAG HERE, SO WRITING IT AGAIN SETTLES NOTHING THE
+    // CALLER DID NOT ASK ABOUT. The rule the specification states beside
+    // set_mode --- that a position whose requested value is the one in effect
+    // is not written --- binds an implementation whose position stands for
+    // several mechanisms; this one stands for exactly one, and assigning it
+    // from the mode word is the same act as leaving it alone.
 
     // A position this implementation does not distinguish is ignored rather than
     // refused, which clause 6.2 requires of a word.
