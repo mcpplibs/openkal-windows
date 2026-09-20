@@ -1,7 +1,7 @@
 [package]
 namespace   = "mcpplibs"
 name        = "openkal-windows"
-version     = "0.9.0"
+version     = "0.10.0"
 description = "An implementation of openkal for Windows, written on the Win32 interfaces and the object manager beneath them, using no C runtime symbol."
 license     = "Apache-2.0"
 
@@ -16,6 +16,50 @@ license     = "Apache-2.0"
 provides    = ["mcpp:kernel-abi=openkal"]
 authors     = ["mcpplibs"]
 repo        = "https://github.com/mcpplibs/openkal-windows"
+
+# WHICH INTERFACES THIS IMPLEMENTATION PROVIDES, DERIVED FROM THE ARTEFACT AND
+# NOT WRITTEN BY HAND.
+#
+# openkal's specification names no set of interfaces: clause 3.3 withdrew the
+# one it had named (`hosted`) because a name describing a class of environment
+# is falsified by an environment nobody had in mind, and that one was falsified
+# inside its own ecosystem within a release. Enumeration by the package
+# replaced it, and a build tool reads this array at dependency resolution
+# against the `requires-interfaces` a consumer states in its own manifest --
+# the first of the three times clause 6.2 tabulates, and the earliest at which
+# the question can be answered.
+#
+# FOURTEEN AND NOT FIFTEEN. `openkal.space` is absent: this environment has no
+# operation upon an address space it can supply, and clause 3 says an
+# implementation provides an interface in whole or not at all. A consumer that
+# needs it is refused here and builds on openkal-linux, which is the whole
+# point of stating the set rather than a name for a class of environment.
+#
+# GENERATED, AND CI DIFFS IT AGAINST THE OBJECTS:
+#
+#     bash .spec/tools/check-surface.sh --toml .spec/SURFACE.txt \
+#          $(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o')
+#
+# BACKWARD COMPATIBLE. An engine that predates the key reads `[kernel-abi]` as
+# an unknown top-level table and ignores it, so this manifest loads unchanged
+# everywhere it loaded before.
+[kernel-abi]
+provides-interfaces = [
+    "openkal.abort",
+    "openkal.stream",
+    "openkal.memory",
+    "openkal.env",
+    "openkal.time",
+    "openkal.random",
+    "openkal.fs",
+    "openkal.process",
+    "openkal.task",
+    "openkal.exec",
+    "openkal.terminal",
+    "openkal.net",
+    "openkal.datagram",
+    "openkal.timeout",
+]
 
 [dependencies]
 openkal = "0.14.0"
