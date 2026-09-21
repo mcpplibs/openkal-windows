@@ -281,7 +281,34 @@ int kal_fs_open(kal_dir base, const char* name, kal_uintptr len,
     void* root = dir_handle(base);
     if (!root || out == nullptr || !okw::acceptable(name, len)) return kal_err_invalid;
 
-    unsigned long access = 0;
+    // FILE_READ_ATTRIBUTES ALWAYS, BECAUSE ASKING A FILE ABOUT ITSELF IS NOT
+    // READING IT.
+    //
+    // `FILE_GENERIC_WRITE` carries FILE_WRITE_ATTRIBUTES and not its
+    // counterpart (winnt.h: STANDARD_RIGHTS_WRITE | FILE_WRITE_DATA |
+    // FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | FILE_APPEND_DATA | SYNCHRONIZE),
+    // while `kal_fs_file_info` answers through
+    // `NtQueryInformationFile(FileBasicInformation)`, which requires
+    // FILE_READ_ATTRIBUTES. A file opened for writing alone could therefore be
+    // written and not described:
+    //
+    //     open(..., O_WRONLY|O_CREAT|O_TRUNC)  ->  fd=3
+    //     fstat(3)                             ->  -1, EACCES
+    //
+    // measured on a Windows runner through musl's `do_fstat`, where the
+    // descriptor is valid by construction and there is nothing to refuse.
+    // libarchive does exactly that pair when opening an archive for output
+    // (archive_write_open_filename.c:178 and :189) and reports
+    // `Couldn't stat '<path>'`, which names the verb and interpolates the
+    // argument --- and sent four investigations to the argument.
+    //
+    // The right is the minimal one for the question: it grants metadata and no
+    // data. `kal_fs_info_by_name` below already asks for it by itself, so this
+    // file knew the requirement in one place and not the other.
+    //
+    // Wine does not enforce the check, so it answers `rc=0` either way. That
+    // is why it is not a second opinion about this.
+    unsigned long access = FILE_READ_ATTRIBUTES;
     if (flags & KAL_OPEN_READ)  access |= FILE_GENERIC_READ;
     if (flags & KAL_OPEN_WRITE) access |= FILE_GENERIC_WRITE;
     if (flags & KAL_OPEN_APPEND) {
@@ -293,7 +320,10 @@ int kal_fs_open(kal_dir base, const char* name, kal_uintptr len,
         access &= ~static_cast<unsigned long>(FILE_WRITE_DATA);
         access |= FILE_APPEND_DATA;
     }
-    if (access == 0) access = FILE_GENERIC_READ;
+    // Neither READ nor WRITE asked for: the caller wants the node, not its
+    // contents. FILE_READ_ATTRIBUTES above is already the whole of that, and
+    // widening it to FILE_GENERIC_READ would grant data nobody requested.
+    if (access == FILE_READ_ATTRIBUTES) access |= FILE_GENERIC_READ;
 
     // The whole of the intent, expressed once. Clause 7.8: an open followed by
     // a truncation is two operations, and a program that stopped between them
