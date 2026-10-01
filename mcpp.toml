@@ -62,7 +62,7 @@ provides-interfaces = [
 ]
 
 [dependencies]
-openkal = "0.14.0"
+openkal = "0.14.1"
 
 # The package contributes definitions and no modules. The interface it
 # implements is declared by the specification package, which this package
