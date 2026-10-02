@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.14.1"
+openkal = "0.15.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.10.2"
+openkal-windows = "0.11.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -121,6 +121,26 @@ The four that openkal 0.8 added and this implementation now provides:
 | `openkal.datagram` | the same calls with `SOCK_DGRAM`, `WSASendTo`/`WSARecvFrom` with their own `OVERLAPPED` for the same reason. This system reports a truncated message as a **failure** where the other two truncate silently; the bytes that fit are delivered either way, and the interface says the excess is lost |
 | `openkal.timeout` | `WSAPoll`, which answers for sockets and for nothing else. A bounded read of a stream that is not a socket reports `kal_err_not_supported` — which the interface's own header anticipates in terms. `kal_timeout_wait_process` is the one operation of the interface this system provides **directly**, because a bounded wait upon an object is the primitive here |
 | `openkal.exec` | `VirtualAlloc` writable, `VirtualProtect` executable, `FlushInstructionCache`. The third call is not optional and the other two systems' implementations do not need to make it explicit |
+
+## The region a context stands on
+
+`kal_task_stack` reports the stack of the calling context, and this
+implementation answers it with one call of this environment's own:
+`GetCurrentThreadStackLimits`. Every context here is a thread this system built
+--- the first one included --- so there is no record to keep and nothing to
+measure, and the call cannot fail.
+
+The call is Windows 8 and later, which is below every target this ecosystem
+names. The alternative reads the thread environment block with inline assembly
+or an intrinsic under three toolchains, and would be the first of either in this
+package.
+
+Which bound it answers is not published: Wine implements it as the reservation
+(`DeallocationStack` and `StackBase`) and WebKit reads it as the OS-maintained
+limits. That is what it is taken to mean here, and what the conformance suite
+observes is the part a caller depends on rather than the choice between the
+two: the region contains the stack of the thread that asked. It is measured on
+this system's own runner and again under Wine on a Linux one.
 
 ## Version 0.13
 

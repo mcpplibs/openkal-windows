@@ -21,6 +21,7 @@ GetConsoleScreenBufferInfo
 GetCurrentDirectoryW
 GetCurrentProcess
 GetCurrentThreadId
+GetCurrentThreadStackLimits
 GetEnvironmentStringsW
 GetExitCodeProcess
 GetFileType

@@ -65,6 +65,24 @@ void kal_task_yield(void) { SwitchToThread(); }
 
 kal_uintptr kal_task_current(void) { return static_cast<kal_uintptr>(GetCurrentThreadId()); }
 
+// The stack the calling context runs on. Version 0.15.
+//
+// ASKED OF THE ENVIRONMENT, WHICH BUILT IT. Every context here is a thread of
+// this system's own --- the first one included --- so there is one question and
+// one answer for all of them: the loader arranged the region the thread runs on
+// and this call reports it. Nothing is recorded and nothing is measured, and the
+// call itself cannot fail, which is why the only refusal this operation has is
+// an argument that is not there.
+int kal_task_stack(void** base, kal_uintptr* size) {
+    if (base == nullptr || size == nullptr) return kal_err_invalid;
+    unsigned long long low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    if (high <= low) return kal_err_io;
+    *base = reinterpret_cast<void*>(static_cast<okw_uptr>(low));
+    *size = static_cast<kal_uintptr>(high - low);
+    return kal_ok;
+}
+
 int kal_task_wait(const kal_u32* word, kal_u32 expected,
                   kal_u64 timeout_ns) {
     auto* address = const_cast<volatile void*>(static_cast<const volatile void*>(word));

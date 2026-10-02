@@ -387,6 +387,23 @@ OKW_IMPORT DWORD  OKW_API GetCurrentThreadId(void);
 OKW_IMPORT void   OKW_API Sleep(DWORD);
 OKW_IMPORT BOOL   OKW_API SwitchToThread(void);
 
+// The stack the CALLING thread runs on, for openkal 0.15's `kal_task_stack'.
+//
+// IT TAKES NO THREAD AND CANNOT FAIL. There is no other thread to ask about and
+// no error to report: the loader built the stack of the thread that is asking,
+// and this call answers it. Windows 8 and later, which is below every target
+// this ecosystem names; the alternative reads the thread environment block with
+// inline assembly or an intrinsic under three toolchains, and would be the
+// first of either in this package.
+//
+// WHICH BOUND IT ANSWERS IS NOT PUBLISHED. Wine implements it as the
+// reservation (`DeallocationStack' and `StackBase'), and WebKit reads it as the
+// OS-maintained limits; that is what the call is taken to mean here, and the
+// conformance suite observes the part a caller depends on --- that the region
+// contains the stack of the thread that asked.
+OKW_IMPORT void   OKW_API GetCurrentThreadStackLimits(unsigned long long*,
+                                                     unsigned long long*);
+
 // The address-based wait, which is what openkal.task's suspension primitive
 // rests on here. In `API-MS-Win-Core-Synch-l1-2-0`, which is why the link
 // line names `-lsynchronization` rather than only `-lkernel32`.
