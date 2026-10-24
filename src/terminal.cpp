@@ -50,6 +50,14 @@ int kal_terminal_get_mode(kal_stream s, kal_uintptr* mode) {
     if ((m & enable_line_input) != 0)      out |= KAL_TERM_LINE_EDIT;
     if ((m & enable_echo_input) != 0)      out |= KAL_TERM_ECHO;
     if ((m & enable_processed_input) == 0) out |= KAL_TERM_PASS_CONTROL;
+    // KAL_TERM_PASS_INPUT IS LINE INPUT, INVERTED, AND IT IS NOT A FLAG OF ITS
+    // OWN. This environment alters what is typed only while it assembles lines
+    // --- the return key then ends a line as a carriage return and a line feed
+    // --- and with line input off it delivers the return key as a carriage
+    // return and Ctrl+J as a line feed, which is what the position states.
+    // Measured on a console this implementation's tests allocate, with the keys
+    // written into its input as key events.
+    if ((m & enable_line_input) == 0)      out |= KAL_TERM_PASS_INPUT;
     *mode = out;
     return kal_ok;
 }
@@ -79,6 +87,11 @@ int kal_terminal_set_mode(kal_stream s, kal_uintptr mode) {
     // is not written --- binds an implementation whose position stands for
     // several mechanisms; this one stands for exactly one, and assigning it
     // from the mode word is the same act as leaving it alone.
+
+    // KAL_TERM_PASS_INPUT HAS NO SWITCH HERE, so a request for it is neither
+    // refused nor composed. It follows line input, and kal_terminal_get_mode
+    // reports it as it then stands, which is what terminal.h states of an
+    // environment that cannot separate the alteration from line assembly.
 
     // A position this implementation does not distinguish is ignored rather than
     // refused, which clause 6.2 requires of a word.
