@@ -21,6 +21,7 @@ bool  valid(void* h) { return h != nullptr && h != INVALID_HANDLE_VALUE; }
 constexpr DWORD enable_processed_input = 0x0001;
 constexpr DWORD enable_line_input      = 0x0002;
 constexpr DWORD enable_echo_input      = 0x0004;
+constexpr DWORD enable_virtual_terminal_input = 0x0200;
 
 // KAL_TERM_PASS_CONTROL IS ENABLE_PROCESSED_INPUT, INVERTED. This environment
 // keeps the keystrokes it reserves --- the interrupt, and the pair that stops
@@ -50,6 +51,19 @@ int kal_terminal_get_mode(kal_stream s, kal_uintptr* mode) {
     if ((m & enable_line_input) != 0)      out |= KAL_TERM_LINE_EDIT;
     if ((m & enable_echo_input) != 0)      out |= KAL_TERM_ECHO;
     if ((m & enable_processed_input) == 0) out |= KAL_TERM_PASS_CONTROL;
+    // KAL_TERM_PASS_INPUT IS VIRTUAL TERMINAL INPUT WITH LINE INPUT OFF.
+    //
+    // Measured on a console this implementation's tests allocate, with the keys
+    // written into its input as the key events a keyboard produces. With line
+    // input off and virtual terminal input off, the return key arrives as 0x0d
+    // and Ctrl+J arrives as NOTHING: the console consumes the key and delivers
+    // no byte, which is an alteration of what was typed. With virtual terminal
+    // input on, the return key is 0x0d and Ctrl+J is 0x0a --- the two bytes the
+    // other environments deliver with the position set. With line input on,
+    // the return key ends a line as 0x0d 0x0a and no switch changes that, so the
+    // position reads clear there.
+    if ((m & enable_line_input) == 0 && (m & enable_virtual_terminal_input) != 0)
+        out |= KAL_TERM_PASS_INPUT;
     *mode = out;
     return kal_ok;
 }
@@ -65,6 +79,7 @@ int kal_terminal_set_mode(kal_stream s, kal_uintptr mode) {
     // would find its console changed in ways it did not ask for.
     DWORD m = 0;
     if (!GetConsoleMode(h, &m)) return kal_err_not_supported;
+    const bool unaltered = (m & enable_line_input) == 0 && (m & enable_virtual_terminal_input) != 0;
 
     if ((mode & KAL_TERM_LINE_EDIT) != 0) m |=  enable_line_input;
     else                                  m &= ~enable_line_input;
@@ -80,9 +95,29 @@ int kal_terminal_set_mode(kal_stream s, kal_uintptr mode) {
     // several mechanisms; this one stands for exactly one, and assigning it
     // from the mode word is the same act as leaving it alone.
 
+    // KAL_TERM_PASS_INPUT is virtual terminal input, and only while line input
+    // is off: with lines assembled this environment alters input whatever the
+    // switch says, so a request for the position there leaves it as it stands,
+    // which is what terminal.h states of such an environment. A position whose
+    // requested value is the one in effect is not written.
+    bool asked_vt = false;
+    if (((mode & KAL_TERM_PASS_INPUT) != 0) != unaltered) {
+        if ((mode & KAL_TERM_PASS_INPUT) != 0) {
+            if ((mode & KAL_TERM_LINE_EDIT) == 0) { m |= enable_virtual_terminal_input; asked_vt = true; }
+        } else {
+            m &= ~enable_virtual_terminal_input;
+        }
+    }
+
     // A position this implementation does not distinguish is ignored rather than
-    // refused, which clause 6.2 requires of a word.
-    if (!SetConsoleMode(h, m)) return kal_err_not_supported;
+    // refused, which clause 6.2 requires of a word. A console that predates
+    // virtual terminal input refuses the whole word when it is asked for, so
+    // the word is written again without it: the other positions are
+    // established, and the read-back says the fourth was not.
+    if (!SetConsoleMode(h, m)) {
+        if (!asked_vt || !SetConsoleMode(h, m & ~enable_virtual_terminal_input))
+            return kal_err_not_supported;
+    }
     return kal_ok;
 }
 
