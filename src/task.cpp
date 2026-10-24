@@ -28,19 +28,41 @@ DWORD __stdcall run(void* p) {
     return 0;
 }
 
-}  // namespace
+// THE SIZE A CONTEXT IS GIVEN WHEN IT ASKS FOR NONE. This environment would
+// reserve what the program's header states, 1 MiB by default, and the two other
+// implementations give a context the 8 MiB the host's C library on their systems
+// gives a thread; a program that asks for nothing --- C++'s `std::thread' cannot
+// ask --- is given the same room on all three. It is a reservation, committed as
+// the stack grows, so the size costs address space and not memory.
+//
+// No guard is added. This environment places its own below the committed part
+// of the stack and moves it as the stack grows, and the compilers that target it
+// probe a frame larger than a page one page at a time, so a large frame cannot
+// step over it.
+constexpr unsigned long long kDefaultStack = 8ull * 1024u * 1024u;
 
-extern "C" {
+// What a request for `want' bytes is reserved as. The bounds this environment
+// reports to the context include the pages it keeps for its guard, so the
+// reservation exceeds the request by more than those; what the context is told
+// by kal_task_stack is then at least what it asked for.
+constexpr unsigned long long kSlack = 256u * 1024u;
 
-int kal_task_start(void (*entry)(void*), void* arg, kal_task* out) {
+unsigned long long stack_for(unsigned long long want) {
+    if (want > (1ull << 46)) return 0;
+    const unsigned long long w = (want + 0xffffu) & ~0xffffull;   // the reservation granularity
+    return (w > kDefaultStack ? w : kDefaultStack) + kSlack;
+}
+
+constexpr DWORD stack_size_param_is_a_reservation = 0x00010000;
+
+int start(void (*entry)(void*), void* arg, unsigned long long want, kal_task* out) {
     if (entry == nullptr || out == nullptr) return kal_err_invalid;
+    const unsigned long long bytes = stack_for(want);
+    if (bytes == 0) return kal_err_no_memory;
     auto* c = static_cast<context*>(kal_alloc(sizeof(context), alignof(context)));
     if (!c) return kal_err_no_memory;
     c->entry = entry; c->arg = arg;
-    // The stack is the implementation's, which is what the specification says
-    // of it: an environment that does not allocate stacks separately cannot
-    // honour a request for one, so there is no parameter for it.
-    void* h = CreateThread(nullptr, 0, run, c, 0, nullptr);
+    void* h = CreateThread(nullptr, bytes, run, c, stack_size_param_is_a_reservation, nullptr);
     if (!h) {
         const int e = okw::translate_win32(GetLastError());
         kal_free(c, sizeof(context), alignof(context));
@@ -49,6 +71,21 @@ int kal_task_start(void (*entry)(void*), void* arg, kal_task* out) {
     c->thread = h;
     *out = kal_task{ reinterpret_cast<kal_uintptr>(c) };
     return kal_ok;
+}
+
+}  // namespace
+
+extern "C" {
+
+int kal_task_start(void (*entry)(void*), void* arg, kal_task* out) {
+    return start(entry, arg, 0, out);
+}
+
+// A least size, version 0.16: at least the size asked for, and never less than
+// the default.
+int kal_task_start_sized(void (*entry)(void*), void* arg, kal_uintptr stack_size,
+                         kal_task* out) {
+    return start(entry, arg, stack_size, out);
 }
 
 int kal_task_join(kal_task t) {
