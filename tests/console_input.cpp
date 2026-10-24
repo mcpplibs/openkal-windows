@@ -144,6 +144,25 @@ int main() {
     g_spelling = 0;
     std::printf("  measured  %d of 3 spellings of Ctrl+J delivered 0x0a\n", lf);
 
+    // The same spellings with the console's virtual terminal input on, which
+    // is this environment's own switch for delivering what a key produces.
+    {
+        DWORD cm = 0;
+        GetConsoleMode(in, &cm);
+        const BOOL vt = SetConsoleMode(in, cm | 0x0200 /* ENABLE_VIRTUAL_TERMINAL_INPUT */);
+        std::printf("  measured  virtual terminal input %s\n", vt ? "accepted" : "refused");
+        if (vt) {
+            got = type_and_read(in, s, "E", b, sizeof b);
+            show("vt input: Enter", b, got);
+            for (g_spelling = 0; g_spelling < 3; ++g_spelling) {
+                got = type_and_read(in, s, "J", b, sizeof b);
+                show(spelled[g_spelling], b, got);
+            }
+            g_spelling = 0;
+            SetConsoleMode(in, cm);
+        }
+    }
+
     // Raw, and nothing reserved: what a program that reads keystrokes asks for.
     check(kal_terminal_set_mode(s, KAL_TERM_PASS_CONTROL | KAL_TERM_PASS_INPUT) == kal_ok,
           "every keystroke, unaltered, is requested");
