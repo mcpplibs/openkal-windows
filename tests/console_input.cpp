@@ -63,9 +63,23 @@ int type_and_read(HANDLE in, kal_stream s, const char* keys, unsigned char* out,
         key(&rec[n++], vk, ch, ctrl, FALSE);
     }
     DWORD written = 0;
-    if (!WriteConsoleInputW(in, rec, static_cast<DWORD>(n), &written)) return -1;
+    if (!WriteConsoleInputW(in, rec, static_cast<DWORD>(n), &written)) {
+        std::printf("  WriteConsoleInputW failed: %lu\n", GetLastError());
+        return -1;
+    }
+    DWORD queued = 0;
+    GetNumberOfConsoleInputEvents(in, &queued);
+    std::printf("  wrote %lu of %d events; %lu queued\n", written, n, queued);
     int got = 0;
     while (got < want) {
+        // A read is made only once the console says there is input, so a key
+        // event the console does not turn into a byte is reported rather than
+        // waited for.
+        if (WaitForSingleObject(in, 3000) != WAIT_OBJECT_0) {
+            GetNumberOfConsoleInputEvents(in, &queued);
+            std::printf("  no input within 3 s; %lu events still queued\n", queued);
+            break;
+        }
         const kal_intptr r = kal_stream_read(s, out + got, static_cast<kal_uintptr>(want - got));
         if (r <= 0) break;
         got += static_cast<int>(r);
