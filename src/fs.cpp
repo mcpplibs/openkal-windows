@@ -230,6 +230,10 @@ void fill_absent(kal_node_info* out) {
 // each other's entries.
 struct listing {
     void*    handle;
+    void*    dir;      // the handle of the directory it was begun upon
+    listing* next;
+    int      busy;     // a context is inside kal_fs_list_next with it
+    int      doomed;   // its directory was closed while it was busy
     okw_uptr used;
     okw_uptr at;
     bool     first;
@@ -247,6 +251,72 @@ struct listing {
     // concurrent operations upon distinct handles be permitted.
     char     reported[512];
 };
+
+// THE ENUMERATIONS NOT YET READ TO THE END, BECAUSE CLOSING THE DIRECTORY MUST
+// END THEM. fs.h releases an iterator "by reading past the end or by closing
+// the directory that produced it", and the handle a listing holds is its own,
+// so closing the directory's handle does not reach it. Measured on the Linux
+// implementation, which had the same shape (mcpplibs/openkal-linux#34): a C
+// library above that stopped reading a directory early kept a handle for every
+// directory it closed.
+//
+// A slim lock, because it is one pointer, all-zero is unlocked, and it needs
+// nothing from openkal.task.
+listing* g_listings = nullptr;
+SRWLOCK_ g_listings_lock{};
+
+void listing_release(listing* s) {
+    okw::NtClose(s->handle);
+    kal_free(s, sizeof(listing), alignof(listing));
+}
+
+// Ends every listing begun upon `dir'. A listing another context is reading is
+// marked rather than released, and that context releases it on its way out:
+// clause 6.6 requires that concurrent operations upon one handle not damage
+// this implementation's state, and freeing a buffer the system is writing into
+// would.
+void listings_end(void* dir) {
+    listing* done = nullptr;
+    AcquireSRWLockExclusive(&g_listings_lock);
+    for (listing** p = &g_listings; *p != nullptr;) {
+        listing* s = *p;
+        if (s->dir != dir || s->doomed) { p = &s->next; continue; }
+        if (s->busy) { s->doomed = 1; p = &s->next; continue; }
+        *p = s->next; s->next = done; done = s;
+    }
+    ReleaseSRWLockExclusive(&g_listings_lock);
+    while (done != nullptr) { listing* s = done; done = s->next; listing_release(s); }
+}
+
+// Takes `s' for the calling context, or reports that it is not an open listing
+// of `dir'. The word is found among the open listings rather than read through,
+// so a stale iterator is refused rather than followed.
+bool listing_take(listing* s, void* dir) {
+    for (;;) {
+        AcquireSRWLockExclusive(&g_listings_lock);
+        listing* p = g_listings;
+        while (p != nullptr && p != s) p = p->next;
+        if (p == nullptr || p->dir != dir || p->doomed) {
+            ReleaseSRWLockExclusive(&g_listings_lock);
+            return false;
+        }
+        if (!p->busy) { p->busy = 1; ReleaseSRWLockExclusive(&g_listings_lock); return true; }
+        ReleaseSRWLockExclusive(&g_listings_lock);
+        SwitchToThread();
+    }
+}
+
+void listing_give(listing* s, bool ended) {
+    AcquireSRWLockExclusive(&g_listings_lock);
+    s->busy = 0;
+    const bool release = ended || s->doomed;
+    if (release) {
+        for (listing** p = &g_listings; *p != nullptr; p = &(*p)->next)
+            if (*p == s) { *p = s->next; break; }
+    }
+    ReleaseSRWLockExclusive(&g_listings_lock);
+    if (release) listing_release(s);
+}
 
 }  // namespace
 
@@ -348,7 +418,11 @@ int kal_fs_open(kal_dir base, const char* name, kal_uintptr len,
 
 void kal_fs_close_dir(kal_dir d) {
     void* h = dir_handle(d);
-    if (h) { okw::retire(d.h); okw::NtClose(h); }
+    if (!h) return;
+    // Before the close, because after it the same value may already name
+    // another directory whose enumerations are not this one's.
+    listings_end(h);
+    okw::retire(d.h); okw::NtClose(h);
 }
 
 void kal_fs_close_file(kal_file f) {
@@ -647,16 +721,24 @@ int kal_fs_list_begin(kal_dir d, kal_uintptr* iter) {
 
     auto* s = static_cast<listing*>(kal_alloc(sizeof(listing), alignof(listing)));
     if (!s) { okw::NtClose(own); return kal_err_no_memory; }
-    s->handle = own; s->used = 0; s->at = 0; s->first = true;
+    s->handle = own; s->dir = root; s->busy = 0; s->doomed = 0;
+    s->used = 0; s->at = 0; s->first = true;
+    AcquireSRWLockExclusive(&g_listings_lock);
+    s->next = g_listings; g_listings = s;
+    ReleaseSRWLockExclusive(&g_listings_lock);
     *iter = reinterpret_cast<kal_uintptr>(s);
     return kal_ok;
 }
 
-int kal_fs_list_next(kal_dir, kal_uintptr* iter,
+int kal_fs_list_next(kal_dir d, kal_uintptr* iter,
                      char* name_out, kal_uintptr name_cap,
                      kal_uintptr* name_len, int* kind) {
-    if (iter == nullptr || *iter == 0) return kal_err_invalid;
+    // A closed directory is a released handle (clause 6.7), and closing it
+    // released the iterator too, which fs.h states.
+    void* root = dir_handle(d);
+    if (!root || iter == nullptr || *iter == 0) return kal_err_invalid;
     auto* s = reinterpret_cast<listing*>(*iter);
+    if (!listing_take(s, root)) return kal_err_invalid;
 
     for (;;) {
         if (s->at >= s->used) {
@@ -667,8 +749,7 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter,
                 okw::file_directory_information_class, 0, nullptr, s->first ? 1 : 0);
             s->first = false;
             if (!okw::ok(r)) {
-                okw::NtClose(s->handle);
-                kal_free(s, sizeof(listing), alignof(listing));
+                listing_give(s, true);
                 *iter = 0;
                 if (name_len) *name_len = 0;
                 // The end of a directory is reported here as a distinct status
@@ -697,6 +778,7 @@ int kal_fs_list_next(kal_dir, kal_uintptr* iter,
         if (kind) *kind = (e->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? kal_node_link
                         : (e->file_attributes & FILE_ATTRIBUTE_DIRECTORY)     ? kal_node_directory
                                                                               : kal_node_file;
+        listing_give(s, false);
         return kal_ok;
     }
 }
