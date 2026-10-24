@@ -3,18 +3,21 @@
 //
 // mcpplibs/openkal#48: above the two other implementations the return key
 // reached a program in raw mode as a line feed, the same byte Ctrl+J produces.
-// The position that answers it is meant to make the bytes a program reads the
-// same on all three when it is set, so this test writes the keys into a console
-// of its own as key events --- the form a keyboard produces --- reads them back
-// through kal_stream_read, prints what arrived under each mode, and checks:
+// The position that answers it makes the bytes a program reads the same on all
+// three when it is set. This test writes the keys into a console of its own as
+// the key events a keyboard produces, reads them back through kal_stream_read,
+// prints what arrived under each mode, and checks:
 //
-//   with line input off, the position reads set, and the return key is 0x0d
-//   and Ctrl+J is 0x0a, which is what the other two deliver with it set;
-//   with line input on, the position reads clear.
+//   with line input off and nothing else asked, the position reads clear, the
+//   return key is 0x0d, and what Ctrl+J produces is printed (measured: nothing);
+//   with the position set, the return key is 0x0d and Ctrl+J is 0x0a, which is
+//   what the other two deliver with it set;
+//   with line input on, the position reads clear whatever was asked.
 //
 // A console is allocated rather than inherited, because a runner's own may be
-// absent or redirected. A watchdog ends the test if a read waits for a key that
-// never arrives, so a wrong expectation is a failure rather than a hang.
+// absent or redirected. Every measurement ends with a key that always produces
+// a byte, so a key that produces none is measured rather than waited for; a
+// watchdog ends the test if even that does not arrive.
 #include <windows.h>
 #include <cstdio>
 #include <openkal/stream.h>
@@ -126,58 +129,48 @@ int main() {
     unsigned char b[16] = {};
     kal_uintptr m = 0;
 
-    // Raw, with the environment's reserved keys kept: the ordinary raw mode.
+    // Raw, nothing else asked: what this console does with the keys by itself.
     check(kal_terminal_set_mode(s, 0) == kal_ok, "line input and echo are turned off");
-    check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) != 0,
-          "with line input off the position reads set");
+    check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) == 0,
+          "with virtual terminal input off the position reads clear");
     int got = type_and_read(in, s, "E", b, sizeof b);
-    show("line off, processed on: Enter", b, got);
+    show("raw: Enter", b, got);
     check(got == 1 && b[0] == 0x0d, "the return key is 0x0d");
-    const char* spelled[] = { "Ctrl+J, keyboard scan code", "Ctrl+J, no scan code", "line feed, no control" };
-    int lf = 0;
+    const char* spelled[] = { "raw: Ctrl+J, keyboard scan code", "raw: Ctrl+J, no scan code",
+                              "raw: line feed, no control" };
     for (g_spelling = 0; g_spelling < 3; ++g_spelling) {
         got = type_and_read(in, s, "J", b, sizeof b);
         show(spelled[g_spelling], b, got);
-        if (got == 1 && b[0] == 0x0a) ++lf;
-        if (got == 1) check(b[0] != 0x0d, "Ctrl+J is not the byte the return key is");
     }
     g_spelling = 0;
-    std::printf("  measured  %d of 3 spellings of Ctrl+J delivered 0x0a\n", lf);
 
-    // The same spellings with the console's virtual terminal input on, which
-    // is this environment's own switch for delivering what a key produces.
-    {
-        DWORD cm = 0;
-        GetConsoleMode(in, &cm);
-        const BOOL vt = SetConsoleMode(in, cm | 0x0200 /* ENABLE_VIRTUAL_TERMINAL_INPUT */);
-        std::printf("  measured  virtual terminal input %s\n", vt ? "accepted" : "refused");
-        if (vt) {
-            got = type_and_read(in, s, "E", b, sizeof b);
-            show("vt input: Enter", b, got);
-            for (g_spelling = 0; g_spelling < 3; ++g_spelling) {
-                got = type_and_read(in, s, "J", b, sizeof b);
-                show(spelled[g_spelling], b, got);
-            }
-            g_spelling = 0;
-            SetConsoleMode(in, cm);
-        }
-    }
+    // Raw, and nothing altered: what a program that tells keys apart asks for.
+    // These are the bytes the other two environments deliver with the position
+    // set, which is what the position is for.
+    check(kal_terminal_set_mode(s, KAL_TERM_PASS_INPUT) == kal_ok, "unaltered input is requested");
+    check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) != 0,
+          "the position reads set once established");
+    got = type_and_read(in, s, "EJ", b, sizeof b);
+    show("unaltered: Enter Ctrl+J", b, got);
+    check(got == 2 && b[0] == 0x0d && b[1] == 0x0a, "the return key is 0x0d and Ctrl+J is 0x0a");
 
-    // Raw, and nothing reserved: what a program that reads keystrokes asks for.
     check(kal_terminal_set_mode(s, KAL_TERM_PASS_CONTROL | KAL_TERM_PASS_INPUT) == kal_ok,
           "every keystroke, unaltered, is requested");
-    check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) != 0,
-          "the position reads set when it is requested with line input off");
-    got = type_and_read(in, s, "E", b, sizeof b);
-    show("line off, processed off: Enter", b, got);
-    check(got == 1 && b[0] == 0x0d, "the return key is 0x0d with nothing reserved");
-    got = type_and_read(in, s, "J", b, sizeof b);
-    show("line off, processed off: Ctrl+J", b, got);
+    got = type_and_read(in, s, "EJ", b, sizeof b);
+    show("unaltered, nothing reserved: Enter Ctrl+J", b, got);
+    check(got == 2 && b[0] == 0x0d && b[1] == 0x0a, "the same two bytes with nothing reserved");
 
-    // A request this environment cannot separate from line input is left as it
-    // stands, and the read-back says so.
-    check(kal_terminal_set_mode(s, KAL_TERM_PASS_CONTROL) == kal_ok, "altered input is requested in raw mode");
-    check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) != 0,
+    // Cleared again, and written only because it changed.
+    check(kal_terminal_set_mode(s, KAL_TERM_PASS_CONTROL) == kal_ok, "altered input is requested again");
+    check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) == 0,
+          "the position reads clear once cleared");
+
+    // Lines assembled, with the position asked for: this console alters input
+    // while it assembles lines whatever its switches say, so the request leaves
+    // the position clear and the read-back says so.
+    check(kal_terminal_set_mode(s, KAL_TERM_LINE_EDIT | KAL_TERM_PASS_INPUT) == kal_ok,
+          "unaltered input is requested with line input on");
+    check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) == 0,
           "the read-back reports what is in effect rather than what was asked");
 
     // Lines assembled: the position reads clear, and what arrives is measured.
