@@ -44,7 +44,7 @@ void key(INPUT_RECORD* r, WORD vk, wchar_t ch, DWORD ctrl, BOOL down) {
     r->Event.KeyEvent.bKeyDown = down;
     r->Event.KeyEvent.wRepeatCount = 1;
     r->Event.KeyEvent.wVirtualKeyCode = vk;
-    r->Event.KeyEvent.wVirtualScanCode = static_cast<WORD>(MapVirtualKeyW(vk, 0));
+    r->Event.KeyEvent.wVirtualScanCode = 0;   // a key event written by a program carries none
     r->Event.KeyEvent.uChar.UnicodeChar = ch;
     r->Event.KeyEvent.dwControlKeyState = ctrl;
 }
