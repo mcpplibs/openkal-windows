@@ -55,12 +55,18 @@ void key(INPUT_RECORD* r, WORD vk, WORD scan, wchar_t ch, DWORD ctrl, BOOL down)
 // is tried and printed.
 int g_spelling = 0;
 
-// Writes the keys `keys' as presses and releases, then reads `want' bytes.
-int type_and_read(HANDLE in, kal_stream s, const char* keys, unsigned char* out, int want) {
+// Writes the keys `keys' as presses and releases, then a `q', and reads until
+// the `q' arrives. What came before it is what the keys produced --- a key the
+// console turns into no byte produces nothing, and the `q' still ends the read,
+// which is what lets nothing be measured rather than waited for.
+int type_and_read(HANDLE in, kal_stream s, const char* keys, unsigned char* out, int cap) {
     FlushConsoleInputBuffer(in);
-    INPUT_RECORD rec[32];
+    INPUT_RECORD rec[34];
     int n = 0;
-    for (const char* k = keys; *k; ++k) {
+    char all[16]; int m = 0;
+    for (const char* k = keys; *k && m < 14; ++k) all[m++] = *k;
+    all[m++] = 'q'; all[m] = 0;
+    for (const char* k = all; *k; ++k) {
         WORD vk; WORD scan = 0; wchar_t ch; DWORD ctrl = 0;
         if (*k == 'E')      { vk = VK_RETURN; scan = 0x1c; ch = L'\r'; }
         else if (*k == 'J') {
@@ -71,7 +77,7 @@ int type_and_read(HANDLE in, kal_stream s, const char* keys, unsigned char* out,
             case 2: scan = 0x24; ctrl = 0;                 break;   // the character alone
             }
         }
-        else                { vk = static_cast<WORD>(*k - 'a' + 'A'); ch = static_cast<wchar_t>(*k); }
+        else { vk = static_cast<WORD>(*k - 'a' + 'A'); scan = 0; ch = static_cast<wchar_t>(*k); }
         key(&rec[n++], vk, scan, ch, ctrl, TRUE);
         key(&rec[n++], vk, scan, ch, ctrl, FALSE);
     }
@@ -80,23 +86,18 @@ int type_and_read(HANDLE in, kal_stream s, const char* keys, unsigned char* out,
         std::printf("  WriteConsoleInputW failed: %lu\n", GetLastError());
         return -1;
     }
-    DWORD queued = 0;
-    GetNumberOfConsoleInputEvents(in, &queued);
-    std::printf("  wrote %lu of %d events; %lu queued\n", written, n, queued);
     int got = 0;
-    while (got < want) {
-        // A read is made only once the console says there is input, so a key
-        // event the console does not turn into a byte is reported rather than
-        // waited for.
-        if (WaitForSingleObject(in, 3000) != WAIT_OBJECT_0) {
-            GetNumberOfConsoleInputEvents(in, &queued);
-            std::printf("  no input within 3 s; %lu events still queued\n", queued);
-            break;
-        }
-        const kal_intptr r = kal_stream_read(s, out + got, static_cast<kal_uintptr>(want - got));
+    unsigned char buf[64];
+    int have = 0;
+    for (;;) {
+        const kal_intptr r = kal_stream_read(s, buf + have, sizeof buf - have);
         if (r <= 0) break;
-        got += static_cast<int>(r);
+        have += static_cast<int>(r);
+        bool end = false;
+        for (int i = 0; i < have; ++i) if (buf[i] == 'q') { end = true; have = i; break; }
+        if (end || have >= static_cast<int>(sizeof buf)) break;
     }
+    for (int i = 0; i < have && got < cap; ++i) out[got++] = buf[i];
     return got;
 }
 
@@ -122,20 +123,20 @@ int main() {
     }
     CreateThread(nullptr, 0, watchdog, nullptr, 0, nullptr);
     const kal_stream s{ reinterpret_cast<kal_uintptr>(in) };
-    unsigned char b[8] = {};
+    unsigned char b[16] = {};
     kal_uintptr m = 0;
 
     // Raw, with the environment's reserved keys kept: the ordinary raw mode.
     check(kal_terminal_set_mode(s, 0) == kal_ok, "line input and echo are turned off");
     check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) != 0,
           "with line input off the position reads set");
-    int got = type_and_read(in, s, "E", b, 1);
+    int got = type_and_read(in, s, "E", b, sizeof b);
     show("line off, processed on: Enter", b, got);
     check(got == 1 && b[0] == 0x0d, "the return key is 0x0d");
     const char* spelled[] = { "Ctrl+J, keyboard scan code", "Ctrl+J, no scan code", "line feed, no control" };
     int lf = 0;
     for (g_spelling = 0; g_spelling < 3; ++g_spelling) {
-        got = type_and_read(in, s, "J", b, 1);
+        got = type_and_read(in, s, "J", b, sizeof b);
         show(spelled[g_spelling], b, got);
         if (got == 1 && b[0] == 0x0a) ++lf;
         if (got == 1) check(b[0] != 0x0d, "Ctrl+J is not the byte the return key is");
@@ -148,10 +149,10 @@ int main() {
           "every keystroke, unaltered, is requested");
     check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) != 0,
           "the position reads set when it is requested with line input off");
-    got = type_and_read(in, s, "E", b, 1);
+    got = type_and_read(in, s, "E", b, sizeof b);
     show("line off, processed off: Enter", b, got);
     check(got == 1 && b[0] == 0x0d, "the return key is 0x0d with nothing reserved");
-    got = type_and_read(in, s, "J", b, 1);
+    got = type_and_read(in, s, "J", b, sizeof b);
     show("line off, processed off: Ctrl+J", b, got);
 
     // A request this environment cannot separate from line input is left as it
@@ -164,7 +165,17 @@ int main() {
     check(kal_terminal_set_mode(s, KAL_TERM_LINE_EDIT) == kal_ok, "line input is turned on");
     check(kal_terminal_get_mode(s, &m) == kal_ok && (m & KAL_TERM_PASS_INPUT) == 0,
           "with line input on the position reads clear");
-    got = type_and_read(in, s, "aE", b, 3);
+    // With lines assembled the `q' is part of the next line, so the line is
+    // read on its own: the read returns once the return key ends it.
+    FlushConsoleInputBuffer(in);
+    {
+        INPUT_RECORD rec[4];
+        key(&rec[0], 'A', 0, L'a', 0, TRUE);  key(&rec[1], 'A', 0, L'a', 0, FALSE);
+        key(&rec[2], VK_RETURN, 0x1c, L'\r', 0, TRUE); key(&rec[3], VK_RETURN, 0x1c, L'\r', 0, FALSE);
+        DWORD w = 0;
+        WriteConsoleInputW(in, rec, 4, &w);
+        got = static_cast<int>(kal_stream_read(s, b, sizeof b));
+    }
     show("line on: a Enter", b, got);
     check(got >= 2 && b[0] == 'a', "a line is delivered");
 
