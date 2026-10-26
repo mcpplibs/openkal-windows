@@ -168,6 +168,13 @@ kal_intptr kal_env_var_at(kal_uintptr index, char* out, kal_uintptr cap) {
 
 // THE IMAGE THIS SYSTEM STARTED (0.17): the name its loader recorded for the
 // program's own module, the full path the process was created from.
+// A program built for its environment was loaded by nothing the interface
+// names (clause 12: only an image has a loader to name).
+kal_intptr kal_env_loader(char* out, kal_uintptr cap) {
+    (void)out; (void)cap;
+    return -kal_err_not_found;
+}
+
 kal_intptr kal_env_image(char* out, kal_uintptr cap) {
     wchar_t wide[okw::kMaxName];
     const DWORD n = GetModuleFileNameW(nullptr, wide, okw::kMaxName);
