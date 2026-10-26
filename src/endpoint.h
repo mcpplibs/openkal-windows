@@ -177,8 +177,9 @@ inline network_calls* net_or_null() {
 // WHETHER THIS SYSTEM OFFERS THE LOCAL FAMILY (0.17): sockets bound to a name in
 // the file system, from version 10 1803 on. Asked once, by making one.
 inline bool local_family_available() {
-    static int known = 0;   // 0 not asked, 1 yes, -1 no
-    int v = __atomic_load_n(&known, __ATOMIC_ACQUIRE);
+    // Two contexts asking at once both probe, and both find the same answer.
+    static volatile int known = 0;   // 0 not asked, 1 yes, -1 no
+    int v = known;
     if (v == 0) {
         network_calls* n = net_or_null();
         v = -1;
@@ -186,7 +187,7 @@ inline bool local_family_available() {
             const SOCKET s = n->socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, nullptr, 0, 0x01 /* WSA_FLAG_OVERLAPPED */);
             if (s != INVALID_SOCKET) { n->close(s); v = 1; }
         }
-        __atomic_store_n(&known, v, __ATOMIC_RELEASE);
+        known = v;
     }
     return v == 1;
 }

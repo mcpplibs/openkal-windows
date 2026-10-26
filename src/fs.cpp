@@ -95,7 +95,7 @@ preopen* table(kal_uintptr* count) {
             preopen& slot = t[used];
             slot.len = okw::narrow(root, 2, slot.name, sizeof slot.name);
             slot.handle = okw::pack(h);
-            __atomic_store_n(&used, used + 1, __ATOMIC_RELEASE);
+            ++used;
         }
         g_drives_seen = now;
         ReleaseSRWLockExclusive(&g_table_lock);
@@ -156,7 +156,11 @@ preopen* table(kal_uintptr* count) {
             }
         }
     }
-    if (count) *count = __atomic_load_n(&used, __ATOMIC_ACQUIRE);
+    if (count) {
+        AcquireSRWLockExclusive(&g_table_lock);
+        *count = used;
+        ReleaseSRWLockExclusive(&g_table_lock);
+    }
     return t;
 }
 
