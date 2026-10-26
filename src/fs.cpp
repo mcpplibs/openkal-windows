@@ -1069,8 +1069,26 @@ int kal_fs_link_create(kal_dir base, const char* name, kal_uintptr len,
     const bool directory = (flags & KAL_FS_LINK_DIRECTORY) != 0;
     const DWORD sym_flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
                           | (directory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0u);
-    if (CreateSymbolicLinkW(w->link, w->target, sym_flags)) return kal_ok;
-    const DWORD why = GetLastError();
+    const bool made = CreateSymbolicLinkW(w->link, w->target, sym_flags) != 0;
+    const DWORD why = made ? 0 : GetLastError();
+    // THE NODE IS ASKED FOR, AND NOT ONLY THE RESULT. Measured on the
+    // continuous-integration runners: the call reported failure and the link
+    // was there, reading back what was asked for. What a caller acts upon is
+    // the node, so the node is what decides.
+    {
+        void* probe = nullptr;
+        if (okw::ok(open_relative(root, name, len, FILE_READ_ATTRIBUTES | SYNCHRONIZE, okw::file_open,
+                                  okw::file_open_reparse_point | okw::file_open_for_backup_intent, &probe))) {
+            okw::file_basic_information basic{};
+            okw::io_status_block s{};
+            const bool link = okw::ok(okw::NtQueryInformationFile(probe, &s, &basic, sizeof basic,
+                                                                  okw::file_basic_information_class))
+                              && (basic.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            okw::NtClose(probe);
+            if (link) return kal_ok;
+        }
+    }
+    if (made) return kal_err_io;
     if (why != ERROR_PRIVILEGE_NOT_HELD) return okw::translate_win32(why);
     if (!directory) return kal_err_permission;
 
