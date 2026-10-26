@@ -174,6 +174,23 @@ inline network_calls* net_or_null() {
     return ensure_network() ? &net_calls() : nullptr;
 }
 
+// WHETHER THIS SYSTEM OFFERS THE LOCAL FAMILY (0.17): sockets bound to a name in
+// the file system, from version 10 1803 on. Asked once, by making one.
+inline bool local_family_available() {
+    static int known = 0;   // 0 not asked, 1 yes, -1 no
+    int v = __atomic_load_n(&known, __ATOMIC_ACQUIRE);
+    if (v == 0) {
+        network_calls* n = net_or_null();
+        v = -1;
+        if (n) {
+            const SOCKET s = n->socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, nullptr, 0, 0x01 /* WSA_FLAG_OVERLAPPED */);
+            if (s != INVALID_SOCKET) { n->close(s); v = 1; }
+        }
+        __atomic_store_n(&known, v, __ATOMIC_RELEASE);
+    }
+    return v == 1;
+}
+
 // Whether a stream handle is a socket, version 0.13. GetFileType reports
 // FILE_TYPE_PIPE for both a socket and an ordinary named pipe on this system,
 // so the two cannot be told apart by that alone; getsockname succeeds only
@@ -287,6 +304,8 @@ inline int from_system(const ksockaddr_storage& in, kal_endpoint& out) {
         return kal_ok;
     }
 
+    // A connection made at a name (0.17) has no address and port to state.
+    if (head->family == 1 /* AF_UNIX */ || head->family == 0) return kal_err_not_supported;
     return kal_err_invalid;
 }
 

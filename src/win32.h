@@ -458,6 +458,62 @@ OKW_IMPORT LPWSTR* OKW_API CommandLineToArgvW(LPCWSTR, int*);
 OKW_IMPORT HANDLE OKW_API LoadLibraryW(LPCWSTR);
 OKW_IMPORT void*  OKW_API GetProcAddress(HANDLE, LPCSTR);
 
+// ── openkal 0.17 ────────────────────────────────────────────────────────────
+//
+// The image this program was started from (kal_env_image).
+OKW_IMPORT DWORD  OKW_API GetModuleFileNameW(HANDLE, LPWSTR, DWORD);
+// A program found by its identifier, and what is known of one (kal_process_*).
+OKW_IMPORT HANDLE OKW_API OpenProcess(DWORD, BOOL, DWORD);
+OKW_IMPORT DWORD  OKW_API GetProcessId(HANDLE);
+OKW_IMPORT DWORD  OKW_API GetCurrentProcessId(void);
+OKW_IMPORT BOOL   OKW_API GetProcessTimes(HANDLE, FILETIME*, FILETIME*, FILETIME*, FILETIME*);
+OKW_IMPORT void   OKW_API ExitProcess(UINT);
+// A job that ends its member when the last handle to it closes (K5).
+OKW_IMPORT BOOL   OKW_API SetInformationJobObject(HANDLE, int, LPVOID, DWORD);
+// Links: a junction is a reparse point set by a control code; a symbolic link
+// is created by name (K4).
+OKW_IMPORT BOOL   OKW_API DeviceIoControl(HANDLE, DWORD, LPVOID, DWORD, LPVOID, DWORD, DWORD*, OVERLAPPED*);
+OKW_IMPORT unsigned char OKW_API CreateSymbolicLinkW(LPCWSTR, LPCWSTR, DWORD);
+// Volumes mounted after inception (K9).
+OKW_IMPORT DWORD  OKW_API GetLogicalDrives(void);
+OKW_IMPORT DWORD  OKW_API ResumeThread(HANDLE);
+// What is written to an interactive console, as the characters it is (K10).
+OKW_IMPORT BOOL   OKW_API WriteConsoleW(HANDLE, LPCVOID, DWORD, DWORD*, LPVOID);
+
+enum : DWORD {
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000u,
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004u,
+    FSCTL_SET_REPARSE_POINT = 0x000900A4u,
+    FSCTL_GET_REPARSE_POINT = 0x000900A8u,
+    IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003u,
+    IO_REPARSE_TAG_SYMLINK     = 0xA000000Cu,
+    SYMBOLIC_LINK_FLAG_DIRECTORY = 0x1u,
+    SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE = 0x2u,
+    ERROR_PRIVILEGE_NOT_HELD = 1314u,
+    STATUS_CONTROL_C_EXIT_ = 0xC000013Au,
+};
+
+// JOBOBJECT_EXTENDED_LIMIT_INFORMATION, for one field of it.
+struct JOB_LIMITS {
+    long long PerProcessUserTimeLimit;
+    long long PerJobUserTimeLimit;
+    DWORD LimitFlags;
+    unsigned long long MinimumWorkingSetSize;
+    unsigned long long MaximumWorkingSetSize;
+    DWORD ActiveProcessLimit;
+    unsigned long long Affinity;
+    DWORD PriorityClass;
+    DWORD SchedulingClass;
+    unsigned long long IoCounters[6];
+    unsigned long long ProcessMemoryLimit;
+    unsigned long long JobMemoryLimit;
+    unsigned long long PeakProcessMemoryUsed;
+    unsigned long long PeakJobMemoryUsed;
+};
+static_assert(sizeof(JOB_LIMITS) == 144, "JOBOBJECT_EXTENDED_LIMIT_INFORMATION");
+inline constexpr int  JobObjectExtendedLimitInformation_ = 9;
+inline constexpr DWORD JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE_ = 0x2000u;
+
 // ── ntdll ───────────────────────────────────────────────────────────────────
 //
 // The object-manager entry points. Their STRUCTURES are declared in win.h and

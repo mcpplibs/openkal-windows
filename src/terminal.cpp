@@ -33,6 +33,14 @@ constexpr DWORD enable_virtual_terminal_input = 0x0200;
 
 }  // namespace
 
+namespace {
+// An output handle of a console answers this; an input handle does not.
+bool output_handle(void* h) {
+    CONSOLE_SCREEN_BUFFER_INFO_ info{};
+    return GetConsoleScreenBufferInfo(h, &info) != 0;
+}
+}  // namespace
+
 extern "C" {
 
 int kal_terminal_get_mode(kal_stream s, kal_uintptr* mode) {
@@ -46,6 +54,15 @@ int kal_terminal_get_mode(kal_stream s, kal_uintptr* mode) {
     // console is therefore reported as unsupported rather than as an error of
     // this environment.
     if (!GetConsoleMode(h, &m)) return kal_err_not_supported;
+
+    // A CONSOLE'S OUTPUT HANDLE HAS ITS OWN MODE, WHOSE BITS SHARE NUMBERS WITH
+    // THE INPUT'S (0.17): the bit that is echo on input is the interpretation
+    // of control sequences on output. An output handle answers that position
+    // and no other.
+    if (output_handle(h)) {
+        *mode = (m & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0 ? KAL_TERM_SEQUENCES : 0;
+        return kal_ok;
+    }
 
     kal_uintptr out = 0;
     if ((m & enable_line_input) != 0)      out |= KAL_TERM_LINE_EDIT;
@@ -79,6 +96,14 @@ int kal_terminal_set_mode(kal_stream s, kal_uintptr mode) {
     // would find its console changed in ways it did not ask for.
     DWORD m = 0;
     if (!GetConsoleMode(h, &m)) return kal_err_not_supported;
+    if (output_handle(h)) {
+        const DWORD want = (mode & KAL_TERM_SEQUENCES) != 0
+            ? (m | ENABLE_VIRTUAL_TERMINAL_PROCESSING) : (m & ~ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        // A console before this system's tenth version does not interpret the
+        // sequences and refuses the bit; the mode read back says so.
+        if (want != m) SetConsoleMode(h, want);
+        return kal_ok;
+    }
     const bool unaltered = (m & enable_line_input) == 0 && (m & enable_virtual_terminal_input) != 0;
 
     if ((mode & KAL_TERM_LINE_EDIT) != 0) m |=  enable_line_input;

@@ -38,11 +38,19 @@ inline bool within_bound(void* h) {
     return reinterpret_cast<okw_uptr>(h) < (kSlots << 2);
 }
 
+// THE GENERATION IS TWENTY-FOUR BITS, AND THE TOP BYTE OF THE WORD IS
+// LEFT TO THE INTERFACE (0.13). openkal.process tells three kinds of handle
+// apart there --- a started program, this program, a program found by its
+// identifier --- and a generation that reached the top byte would read as a
+// kind. A slot released sixteen million times wraps; the handle it names
+// then is valid once again only if every intervening one was released too.
+inline constexpr okw_uptr kGenerationMask = 0xffffffu;
+
 inline okw_uptr pack(void* h) {
     if (h == nullptr || h == INVALID_HANDLE_VALUE) return 0;
     const okw_uptr v = reinterpret_cast<okw_uptr>(h);
     if (!within_bound(h)) return v;                    // carried without a generation
-    return (static_cast<okw_uptr>(generations()[slot_of(h)]) << 32) | (v + 1u);
+    return (static_cast<okw_uptr>(generations()[slot_of(h)] & kGenerationMask) << 32) | (v + 1u);
 }
 
 // Returns the environment's handle, or null if the word does not name a live one.
@@ -52,7 +60,8 @@ inline void* unpack(okw_uptr w) {
     if (low == 0) return reinterpret_cast<void*>(w);    // carried without a generation
     void* h = reinterpret_cast<void*>(low - 1u);
     if (!within_bound(h)) return reinterpret_cast<void*>(w);
-    if (static_cast<unsigned>(w >> 32) != generations()[slot_of(h)]) return nullptr;
+    if ((static_cast<unsigned>(w >> 32) & kGenerationMask)
+        != (generations()[slot_of(h)] & kGenerationMask)) return nullptr;
     return h;
 }
 
