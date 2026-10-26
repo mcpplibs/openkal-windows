@@ -94,6 +94,15 @@ struct file_standard_information {
 struct file_position_information { okw_i64 current_byte_offset; };
 struct file_end_of_file_information { okw_i64 end_of_file; };
 struct file_disposition_information { unsigned char delete_file; };
+// The record of the extended class: a flags word, of which these two are used.
+// POSIX semantics removes the name when the call returns, although another
+// handle holds the file open (Windows 10 1709, on a volume that reports
+// fs_supports_posix_unlink_rename).
+struct file_disposition_information_ex { unsigned long flags; };
+enum : unsigned long {
+    file_disposition_delete          = 0x00000001u,
+    file_disposition_posix_semantics = 0x00000002u,
+};
 
 struct file_rename_information {
     unsigned char replace_if_exists;
@@ -137,6 +146,7 @@ struct file_fs_attribute_information {
 enum : unsigned long {
     fs_case_sensitive_search  = 0x00000001u,
     fs_supports_reparse_points = 0x00000080u,
+    fs_supports_posix_unlink_rename = 0x00000400u,
 };
 
 enum : int {
@@ -146,6 +156,7 @@ enum : int {
     file_standard_information_class  = 5,
     file_position_information_class  = 14,
     file_disposition_information_class = 13,
+    file_disposition_information_ex_class = 64,
     file_end_of_file_information_class = 20,
     file_rename_information_class    = 10,
 };

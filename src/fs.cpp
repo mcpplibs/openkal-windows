@@ -725,10 +725,28 @@ int kal_fs_remove(kal_dir base, const char* name, kal_uintptr len) {
     const long r = open_relative(root, name, len, DELETE, okw::file_open,
                                  okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
     if (!okw::ok(r)) return okw::translate_nt(r);
+    // AT ONCE, ALTHOUGH ANOTHER HANDLE HOLDS THE FILE (clause 7.14). The
+    // disposition this system sets by default defers the removal to the last
+    // close, and until then the name stays and refuses every open: measured, a
+    // C++ program in an ok image could not `remove_all' a directory holding
+    // its own lock file, and the same program built for this system could,
+    // because its standard library asks for POSIX semantics. The extended
+    // record asks for them here; a volume or a system without the class answers
+    // with a refusal of the class, and the default disposition is then set,
+    // which is what `kal_fs_props' reports for that volume.
     okw::io_status_block s{};
-    okw::file_disposition_information info{ 1 };
-    const long d = okw::NtSetInformationFile(h, &s, &info, sizeof info,
-                                             okw::file_disposition_information_class);
+    okw::file_disposition_information_ex ex{ okw::file_disposition_delete
+                                             | okw::file_disposition_posix_semantics };
+    long d = okw::NtSetInformationFile(h, &s, &ex, sizeof ex,
+                                       okw::file_disposition_information_ex_class);
+    constexpr long invalid_info_class = static_cast<long>(0xC0000003);
+    constexpr long invalid_parameter  = static_cast<long>(0xC000000D);
+    constexpr long not_supported      = static_cast<long>(0xC00000BB);
+    if (d == invalid_info_class || d == invalid_parameter || d == not_supported) {
+        okw::file_disposition_information info{ 1 };
+        d = okw::NtSetInformationFile(h, &s, &info, sizeof info,
+                                      okw::file_disposition_information_class);
+    }
     okw::NtClose(h);
     return okw::ok(d) ? kal_ok : okw::translate_nt(d);
 }
@@ -962,6 +980,10 @@ kal_uintptr kal_fs_props(kal_dir d) {
         p |= KAL_FS_PROP_LINKS | KAL_FS_PROP_MAKE_LINKS;
     // A rename that does not replace is a field of the rename record (0.17).
     p |= KAL_FS_PROP_RENAME_NO_REPLACE;
+    // A name held open is removed at once (0.17, clause 7.14) where the volume
+    // takes the extended disposition's POSIX semantics, which it reports.
+    if (a.info.attributes & okw::fs_supports_posix_unlink_rename)
+        p |= KAL_FS_PROP_REMOVE_OPEN;
     // A socket bound to a name (0.17) is stored as a reparse point of its own
     // kind, on a volume that has them, by a system whose network interface
     // offers the local family.
