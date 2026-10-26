@@ -716,8 +716,14 @@ int kal_fs_remove(kal_dir base, const char* name, kal_uintptr len) {
     void* h = nullptr;
     // One operation removes a name, and this environment distinguishes two
     // kinds of name where the interface does not, so neither kind is asked for.
+    //
+    // THE NAME, NOT WHAT IT LEADS TO. Opened without `file_open_reparse_point'
+    // a link is followed, so removing a link to a file removed the FILE and
+    // left the link, and a link to a directory could not be removed at all ---
+    // measured since links are made (0.13): a C++ program's `remove_all' of a
+    // directory holding one failed on Windows alone.
     const long r = open_relative(root, name, len, DELETE, okw::file_open,
-                                 okw::file_open_for_backup_intent, &h);
+                                 okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
     if (!okw::ok(r)) return okw::translate_nt(r);
     okw::io_status_block s{};
     okw::file_disposition_information info{ 1 };
@@ -735,8 +741,9 @@ static int rename_with(kal_dir from, const char* a, kal_uintptr alen,
     if (!okw::acceptable(a, alen) || !okw::acceptable(b, blen)) return kal_err_invalid;
 
     void* h = nullptr;
+    // The name is renamed, a link included, never what it leads to.
     const long r = open_relative(source_root, a, alen, DELETE | SYNCHRONIZE,
-                                 okw::file_open, okw::file_open_for_backup_intent, &h);
+                                 okw::file_open, okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
     if (!okw::ok(r)) return okw::translate_nt(r);
 
     okw::wide_name w(b, blen);
