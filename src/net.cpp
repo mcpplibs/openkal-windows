@@ -240,6 +240,13 @@ int kal_net_shutdown(kal_net_conn c, int direction) {
     auto* n = net();
     if (n == nullptr) return kal_err_io;
     if (n->shutdown(s, how) != 0) return okw::last_socket_error();
+    // A READ WAITING IN THE DIRECTION THAT ENDED ENDS TOO (0.17). This system
+    // leaves an overlapped receive pending after `shutdown(SD_RECEIVE)', where
+    // the other two systems end it with the end of input, so it is cancelled
+    // here and src/stream.cpp reports the cancelled read as that end. Measured:
+    // a program that ended a connection from another context waited two
+    // minutes for its reader, on this system alone.
+    if (how != SD_SEND_) CancelIoEx(reinterpret_cast<HANDLE>(s), nullptr);
     return kal_ok;
 }
 

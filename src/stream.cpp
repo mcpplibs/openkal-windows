@@ -180,6 +180,11 @@ kal_intptr kal_stream_read(kal_stream s, void* buf, kal_uintptr len) {
         // this environment reports it as a failure. A caller that could not
         // tell the two apart would treat every completed transfer as broken.
         if (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF) return 0;
+        // A socket whose read direction was ended: the read waiting when it
+        // ended is cancelled (src/net.cpp, kal_net_shutdown) and every later
+        // one is refused with WSAESHUTDOWN. Both are the end of input, as the
+        // other two systems report it.
+        if (socket && (err == ERROR_OPERATION_ABORTED || err == 10058 /* WSAESHUTDOWN */)) return 0;
         return -okw::translate_win32(err);
     }
     // A short read is reported as it occurred: unlike a short write it carries

@@ -6,6 +6,7 @@ LIBRARY KERNEL32.dll
 EXPORTS
 AcquireSRWLockExclusive
 AssignProcessToJobObject
+CancelIoEx
 CloseHandle
 CreateEventW
 CreateFileW
