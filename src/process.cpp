@@ -215,6 +215,69 @@ bool append_quoted(wchar_t* out, okw_uptr cap, okw_uptr& at, const wchar_t* s, o
     return append_wide(out, cap, at, L"\"", 1);
 }
 
+// --- the handles of this interface (0.17) ------------------------------------
+//
+// The top byte of a process word says which of four things it names; handle.h
+// leaves that byte free. A started program is its process handle, as it always
+// was. A started program whose lifetime is bound to this one carries a record
+// beside it (below). This program itself names no handle at all. A program
+// found by its identifier is the handle `OpenProcess' gave, which keeps the
+// identifier from being given to another program while it is held.
+constexpr okw_uptr kind_child = 0, kind_self = 1, kind_opened = 2, kind_bound = 3;
+inline okw_uptr kind_of(kal_process p) { return p.h >> 56; }
+inline okw_uptr with_kind(okw_uptr w, okw_uptr kind) {
+    return (w & 0x00ffffffffffffffull) | (kind << 56);
+}
+
+// A STARTED PROGRAM WHOSE LIFETIME IS BOUND TO THIS ONE (K5).
+//
+// The primitive is a job that ends its members when its last handle closes
+// (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE): this program holds the only handle, and
+// however this program ends, the system closes it. One job per started
+// program, and not one for all of them, because a program that is also placed
+// in a unit of the caller's (`kal_spawn.job') is already in that job, and this
+// system nests a second job beneath the first only while the second is empty.
+//
+// The job's handle must outlive every caller-visible operation on the program,
+// so the word names a record of the two handles --- a pointer to a structure of
+// this implementation's own, which clause 7.2 lists among what a handle may be.
+// The record is released with the process handle; the job's handle is released
+// only once the program has ended, since releasing it earlier would end the
+// program. A record is never reused, so a released word is refused (`gone').
+struct bound_record {
+    void* process;
+    void* job;
+    int   gone;
+};
+inline bound_record* bound_of(kal_process p) {
+    return reinterpret_cast<bound_record*>(p.h & 0x00ffffffffffffffull);
+}
+
+// The process handle a word names, whatever its kind; null for none.
+inline void* process_of(kal_process p) {
+    switch (kind_of(p)) {
+        case kind_child:  return okw::unpack(p.h);
+        case kind_self:   return GetCurrentProcess();
+        case kind_opened: return okw::unpack(with_kind(p.h, 0));
+        case kind_bound: {
+            bound_record* r = bound_of(p);
+            return (r && !r->gone) ? r->process : nullptr;
+        }
+        default: return nullptr;
+    }
+}
+
+// EVERY ENVIRONMENT ENTRY IS `NAME=value' (0.17, process.h).
+bool entries_well_formed(const char** envp, const kal_uintptr* lens, kal_uintptr n) {
+    for (kal_uintptr i = 0; i < n; ++i) {
+        if (envp[i] == nullptr) return false;
+        kal_uintptr eq = 0;
+        while (eq < lens[i] && envp[i][eq] != '=') ++eq;
+        if (eq == 0 || eq == lens[i]) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 extern "C" {
@@ -230,7 +293,11 @@ extern "C" {
 // what a program here gets anyway, so that request IS answerable and is
 // answered.
 //
-// `KAL_SPAWN_BOUND_LIFETIME': no primitive arms it from inside the started image.
+// `KAL_SPAWN_BOUND_LIFETIME' WAS REFUSED HERE UNTIL 0.13, on the ground that no
+// primitive arms it from inside the started image. None needs to: a job that
+// ends its members when its last handle closes is armed from OUTSIDE, by the
+// caller, and the system closes the caller's handle however the caller ends.
+// See `bound_record'.
 //
 // AND THE UNIT IS IMPLEMENTED HERE, WHICH AN EARLIER SHAPE OF IT WAS NOT.
 //
@@ -270,7 +337,10 @@ int kal_process_spawn(const kal_spawn* how,
     if (!dir || !run) return kal_err_invalid;
     if (!okw::acceptable(path, path_len)) return kal_err_invalid;
     if (how->grant_count > 0) return kal_err_not_supported;
-    if (how->flags != 0)      return kal_err_not_supported;
+    if ((how->flags & ~KAL_SPAWN_BOUND_LIFETIME) != 0) return kal_err_not_supported;
+    if (envc > 0 && (envp == nullptr || envp_lens == nullptr)) return kal_err_invalid;
+    if (!entries_well_formed(envp, envp_lens, envc)) return kal_err_invalid;
+    const bool bound = (how->flags & KAL_SPAWN_BOUND_LIFETIME) != 0;
 
     // The unit, created before its first member and reported to the caller. A
     // later member is assigned to the one the caller already holds.
@@ -395,7 +465,9 @@ int kal_process_spawn(const kal_spawn* how,
         // together with the list that narrows what that means; a request with
         // nothing markable inherits nothing rather than everything.
         attribute_list attrs;
-        DWORD creation = CREATE_UNICODE_ENVIRONMENT;
+        // SUSPENDED WHEN IT IS TO BE PLACED, so that nothing it starts can
+        // escape the job before the job holds it.
+        DWORD creation = CREATE_UNICODE_ENVIRONMENT | (bound || unit ? 0x4u /* CREATE_SUSPENDED */ : 0u);
         BOOL  inherit_handles = FALSE;
         if (window.count > 0 && attrs.build(window)) {
             startup.cb = sizeof(STARTUPINFOEXW);
@@ -411,7 +483,6 @@ int kal_process_spawn(const kal_spawn* how,
         if (!started) refusal = GetLastError();
     }
     if (!started) return okw::translate_win32(refusal);
-    CloseHandle(info.hThread);
 
     // ASSIGNED BEFORE THE CALLER IS TOLD ANYTHING. A program that could not be
     // put into the unit is not the program that was asked for --- it would outlive
@@ -419,14 +490,91 @@ int kal_process_spawn(const kal_spawn* how,
     if (unit && !AssignProcessToJobObject(unit, info.hProcess)) {
         const DWORD why = GetLastError();
         TerminateProcess(info.hProcess, 127);
+        CloseHandle(info.hThread);
         CloseHandle(info.hProcess);
         return okw::translate_win32(why);
     }
 
+    // THE BOUND LIFETIME (K5), nested beneath the unit where there is one.
+    bound_record* record = nullptr;
+    if (bound) {
+        void* job = CreateJobObjectW(nullptr, nullptr);
+        JOB_LIMITS limits{};
+        limits.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE_;
+        record = static_cast<bound_record*>(kal_alloc(sizeof(bound_record), alignof(bound_record)));
+        if (!job || !record
+            || !SetInformationJobObject(job, JobObjectExtendedLimitInformation_, &limits, sizeof limits)
+            || !AssignProcessToJobObject(job, info.hProcess)) {
+            const DWORD why = GetLastError();
+            TerminateProcess(info.hProcess, 127);
+            CloseHandle(info.hThread);
+            CloseHandle(info.hProcess);
+            if (job) CloseHandle(job);
+            if (record) kal_free(record, sizeof(bound_record), alignof(bound_record));
+            return record ? okw::translate_win32(why) : kal_err_no_memory;
+        }
+        record->process = info.hProcess;
+        record->job = job;
+        record->gone = 0;
+    }
+    if (bound || unit) ResumeThread(info.hThread);
+    CloseHandle(info.hThread);
+
     // The caller's word, written only now, and only for a unit this start made.
     if (unit_is_new) { how->job->h = okw::pack(unit); ug.own = false; }
 
-    *out = kal_process{ okw::pack(info.hProcess) };
+    *out = record ? kal_process{ with_kind(reinterpret_cast<okw_uptr>(record), kind_bound) }
+                  : kal_process{ okw::pack(info.hProcess) };
+    return kal_ok;
+}
+
+int kal_process_self(kal_process* out) {
+    if (out == nullptr) return kal_err_invalid;
+    *out = kal_process{ with_kind(GetCurrentProcessId(), kind_self) };
+    return kal_ok;
+}
+
+// A program found by its identifier. The handle keeps the identifier from being
+// given to another program while it is held, which is what makes `started_ns'
+// and `ended' answers about this program and not a later one.
+int kal_process_open_id(kal_u64 id, kal_process* out) {
+    if (out == nullptr || id == 0) return kal_err_invalid;
+    if (id > 0xffffffffull) return kal_err_not_found;
+    void* h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE,
+                          static_cast<DWORD>(id));
+    if (!h) {
+        const DWORD e = GetLastError();
+        return e == 87 /* ERROR_INVALID_PARAMETER: no such program */ ? kal_err_not_found
+                                                                      : okw::translate_win32(e);
+    }
+    const okw_uptr w = okw::pack(h);
+    if (w == 0 || (w >> 56) != 0) { CloseHandle(h); return kal_err_no_memory; }
+    *out = kal_process{ with_kind(w, kind_opened) };
+    return kal_ok;
+}
+
+int kal_process_info(kal_process p, kal_u32 wanted, kal_program_info* out) {
+    if (out == nullptr || out->self_size < 8) return kal_err_invalid;
+    void* h = process_of(p);
+    if (!h) return kal_err_invalid;
+    const kal_u32 self = out->self_size;
+    kal_program_info v{};
+    v.self_size = self;
+    v.id = kind_of(p) == kind_self ? GetCurrentProcessId() : GetProcessId(h);
+    v.present = KAL_PINFO_ID | KAL_PINFO_ENDED;
+    v.ended = kind_of(p) != kind_self && WaitForSingleObject(h, 0) == 0 /* WAIT_OBJECT_0 */;
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if ((wanted & (KAL_PINFO_STARTED | KAL_PINFO_CPU)) && GetProcessTimes(h, &created, &exited, &kernel, &user)) {
+        auto ticks = [](const FILETIME& f) {
+            return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime;
+        };
+        if (wanted & KAL_PINFO_STARTED) { v.started_ns = ticks(created) * 100ull; v.present |= KAL_PINFO_STARTED; }
+        if (wanted & KAL_PINFO_CPU) { v.cpu_ns = (ticks(kernel) + ticks(user)) * 100ull; v.present |= KAL_PINFO_CPU; }
+    }
+    const kal_u32 n = self < sizeof v ? self : static_cast<kal_u32>(sizeof v);
+    auto* d = reinterpret_cast<unsigned char*>(out);
+    const auto* s = reinterpret_cast<const unsigned char*>(&v);
+    for (kal_u32 i = 0; i < n; ++i) d[i] = s[i];
     return kal_ok;
 }
 
@@ -445,10 +593,25 @@ namespace {
 kal_u32 g_stop_word = 0;
 int     g_stop_armed = 0;
 
+// HANDLED, AND THE PROGRAM CONTINUES (K3). Returning false passed the event to
+// the next routine, whose default is to end the program at once --- so the
+// word was set and the program was gone before anything could read it.
+// Measured: a console interrupt ended the program the word was armed in.
+//
+// Ctrl+C and Ctrl+Break are handled and the program continues. A console that
+// is closing, a user logging off and a system shutting down are recorded the
+// same way; for those this system ends the program shortly after the routine
+// returns, whatever it returns, which process.h states as a request that is
+// not a veto.
+//
+// THE TAKE-OVER RULE (0.17) HOLDS WITHOUT ANYTHING HERE: a program started
+// with Ctrl+C disabled (CREATE_NEW_PROCESS_GROUP) keeps that flag, which
+// installing a routine does not clear, so a request its starter declined
+// stays declined.
 BOOL OKW_API stop_routine(DWORD) {
     g_stop_word = 1;
     WakeByAddressAll(&g_stop_word);
-    return FALSE;
+    return TRUE;
 }
 }  // namespace
 
@@ -457,6 +620,15 @@ BOOL OKW_API stop_routine(DWORD) {
 const kal_u32* kal_process_stop_requested(void) {
     if (!g_stop_armed) { g_stop_armed = 1; SetConsoleCtrlHandler(stop_routine, TRUE); }
     return &g_stop_word;
+}
+
+// ENDS AS THE REQUEST WOULD HAVE ENDED THE PROGRAM (0.17): with the status this
+// system records for a program a console interrupt ended, which a waiting
+// starter reads as `terminated' and a shell as the interrupt.
+int kal_process_end_as_requested(void) {
+    if (g_stop_word == 0) return kal_err_invalid;
+    ExitProcess(STATUS_CONTROL_C_EXIT_);
+    return kal_err_invalid;
 }
 
 // This program itself joins or forms a unit. NATURAL HERE TOO, and by the
@@ -549,7 +721,9 @@ void kal_process_channel_close(kal_stream s) {
 
 
 int kal_process_wait(kal_process p, int* status, int* terminated) {
-    void* h = okw::unpack(p.h);
+    if (kind_of(p) == kind_self) return kal_err_invalid;
+    if (kind_of(p) == kind_opened) return kal_err_not_supported;
+    void* h = process_of(p);
     if (!h) return kal_err_invalid;
     if (WaitForSingleObject(h, INFINITE) != WAIT_OBJECT_0)
         return okw::translate_win32(GetLastError());
@@ -560,7 +734,9 @@ int kal_process_wait(kal_process p, int* status, int* terminated) {
     // terminating call supplied, and this implementation supplies one that is
     // not an ordinary status --- so the two remain distinguishable, which is
     // what the interface requires and all that it requires.
-    if (code == 0xC0000409u || code == 0xFFFFFFFFu) {
+    // A program ended by a console interrupt, or ending as one asked it to
+    // (kal_process_end_as_requested), is reported as ended by its environment.
+    if (code == 0xC0000409u || code == 0xFFFFFFFFu || code == STATUS_CONTROL_C_EXIT_) {
         if (status)     *status = static_cast<int>(code & 0x7fffffff);
         if (terminated) *terminated = 1;
     } else {
@@ -571,7 +747,9 @@ int kal_process_wait(kal_process p, int* status, int* terminated) {
 }
 
 int kal_process_terminate(kal_process p) {
-    void* h = okw::unpack(p.h);
+    if (kind_of(p) == kind_self) return kal_err_invalid;
+    if (kind_of(p) == kind_opened) return kal_err_not_supported;
+    void* h = process_of(p);
     if (!h) return kal_err_invalid;
     return TerminateProcess(h, 0xFFFFFFFFu) ? kal_ok : okw::translate_win32(GetLastError());
 }
@@ -579,21 +757,45 @@ int kal_process_terminate(kal_process p) {
 // Releasing the handle does not affect the program: this environment keeps the
 // program alive independently of who holds a handle to it.
 void kal_process_close(kal_process p) {
-    void* h = okw::unpack(p.h);
-    if (h) { okw::retire(p.h); CloseHandle(h); }
+    switch (kind_of(p)) {
+        case kind_self: return;
+        case kind_bound: {
+            bound_record* r = bound_of(p);
+            if (!r || r->gone) return;
+            r->gone = 1;
+            // The job is released only once the program has ended: releasing it
+            // earlier would end the program, and releasing a handle does not.
+            if (WaitForSingleObject(r->process, 0) == 0) CloseHandle(r->job);
+            CloseHandle(r->process);
+            return;
+        }
+        case kind_opened: {
+            const okw_uptr w = with_kind(p.h, 0);
+            void* h = okw::unpack(w);
+            if (h) { okw::retire(w); CloseHandle(h); }
+            return;
+        }
+        default: {
+            void* h = okw::unpack(p.h);
+            if (h) { okw::retire(p.h); CloseHandle(h); }
+        }
+    }
 }
 
-// THREE POSITIONS ARE DELIBERATELY ABSENT, AND EACH IS ABSENT BECAUSE THE
-// NEXT CALL REFUSES IT. A word claiming a facility the operation then declines is
-// the disagreement clause 6.2 exists to prevent, so the two are written together
-// and read together:
+// ONE POSITION IS DELIBERATELY ABSENT, BECAUSE THE CALL REFUSES IT. A word
+// claiming a facility the operation then declines is the disagreement clause
+// 6.2 exists to prevent, so the two are written together and read together:
 //
 //   GRANT_DIR       kal_process_spawn refuses a non-empty `grants'
-//   BOUND_LIFETIME  no primitive arms it from inside the started image
+//
+// BOUND_LIFETIME and STOP_REQUESTED were absent until 0.13 (K5, K3).
 kal_uintptr kal_process_props(void) { return
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
   | KAL_PROCESS_PROP_EXIT_STATUS
   | KAL_PROCESS_PROP_CHANNEL
-  | KAL_PROCESS_PROP_JOB; }
+  | KAL_PROCESS_PROP_JOB
+  | KAL_PROCESS_PROP_BOUND_LIFETIME    // K5: a job that ends with this program
+  | KAL_PROCESS_PROP_STOP_REQUESTED    // K3: the routine handles, and the word is read
+  | KAL_PROCESS_PROP_OPEN_ID; }
 
 }

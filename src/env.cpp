@@ -166,4 +166,27 @@ kal_intptr kal_env_var_at(kal_uintptr index, char* out, kal_uintptr cap) {
     return give(g_entry[index], g_name_len[index], out, cap);
 }
 
+// THE IMAGE THIS SYSTEM STARTED (0.17): the name its loader recorded for the
+// program's own module, the full path the process was created from.
+// A program built for its environment was loaded by nothing the interface
+// names (clause 12: only an image has a loader to name).
+kal_intptr kal_env_loader(char* out, kal_uintptr cap) {
+    (void)out; (void)cap;
+    return -kal_err_not_found;
+}
+
+kal_intptr kal_env_image(char* out, kal_uintptr cap) {
+    wchar_t wide[okw::kMaxName];
+    const DWORD n = GetModuleFileNameW(nullptr, wide, okw::kMaxName);
+    if (n == 0 || n >= okw::kMaxName) return -kal_err_not_found;
+    char narrow[3 * okw::kMaxName];
+    const okw_uptr len = okw::narrow(wide, n, narrow, sizeof narrow, false);
+    return give(narrow, len, out, cap);
+}
+
+// For conventions only, as the declaration restricts it.
+kal_intptr kal_env_system(char* out, kal_uintptr cap) {
+    return give("windows", 7, out, cap);
+}
+
 }

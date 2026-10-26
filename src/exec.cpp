@@ -68,6 +68,32 @@ void kal_exec_free(void* p, kal_uintptr size) {
 // must change published bytes need not abandon the region.
 // This system grants executable memory to every program; nothing here is
 // withheld from an artifact for the way it was produced.
+// PART OF A REGION (0.17). This system reserves in sixty-four kibibytes and
+// protects in pages; the second is what a part is measured in.
+kal_uintptr kal_exec_granularity(void) {
+    static kal_uintptr page = 0;
+    if (page == 0) {
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        page = si.dwPageSize ? si.dwPageSize : kPage;
+    }
+    return page;
+}
+
+int kal_exec_publish_part(void* region, kal_uintptr offset, kal_uintptr size) {
+    const kal_uintptr g = kal_exec_granularity();
+    if (region == nullptr || size == 0 || (offset & (g - 1)) != 0 || (size & (g - 1)) != 0
+        || (reinterpret_cast<kal_uintptr>(region) & (g - 1)) != 0)
+        return kal_err_invalid;
+    void* at = static_cast<char*>(region) + offset;
+    DWORD previous = 0;
+    if (!VirtualProtect(at, size, PAGE_EXECUTE_READ, &previous))
+        return okw::translate_win32(GetLastError());
+    if (!FlushInstructionCache(GetCurrentProcess(), at, size))
+        return okw::translate_win32(GetLastError());
+    return kal_ok;
+}
+
 kal_uintptr kal_exec_props(void) {
     return KAL_EXEC_PROP_REPUBLISH | KAL_EXEC_PROP_AVAILABLE;
 }

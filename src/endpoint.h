@@ -174,6 +174,24 @@ inline network_calls* net_or_null() {
     return ensure_network() ? &net_calls() : nullptr;
 }
 
+// WHETHER THIS SYSTEM OFFERS THE LOCAL FAMILY (0.17): sockets bound to a name in
+// the file system, from version 10 1803 on. Asked once, by making one.
+inline bool local_family_available() {
+    // Two contexts asking at once both probe, and both find the same answer.
+    static volatile int known = 0;   // 0 not asked, 1 yes, -1 no
+    int v = known;
+    if (v == 0) {
+        network_calls* n = net_or_null();
+        v = -1;
+        if (n) {
+            const SOCKET s = n->socket(1 /* AF_UNIX */, 1 /* SOCK_STREAM */, 0, nullptr, 0, 0x01 /* WSA_FLAG_OVERLAPPED */);
+            if (s != INVALID_SOCKET) { n->close(s); v = 1; }
+        }
+        known = v;
+    }
+    return v == 1;
+}
+
 // Whether a stream handle is a socket, version 0.13. GetFileType reports
 // FILE_TYPE_PIPE for both a socket and an ordinary named pipe on this system,
 // so the two cannot be told apart by that alone; getsockname succeeds only
@@ -196,6 +214,15 @@ inline bool is_socket_handle(void* h) {
     int len = static_cast<int>(sizeof ss);
     return n->sockname(reinterpret_cast<SOCKET>(h), &ss, &len) == 0;
 }
+
+// The sockets whose read direction this program ended (kal_net_shutdown, 0.17).
+// A read upon one is the end of input, which the other two systems report and
+// this one does not: an overlapped receive pending at `shutdown(SD_RECEIVE)'
+// stays pending, and a later one fails with an error rather than ending. The
+// record is this implementation's, so the answer does not depend on which
+// error the system chose (src/net.cpp).
+void note_read_ended(SOCKET s, bool ended);
+bool read_ended(SOCKET s);
 
 // ── addresses ───────────────────────────────────────────────────────────────
 
@@ -287,6 +314,8 @@ inline int from_system(const ksockaddr_storage& in, kal_endpoint& out) {
         return kal_ok;
     }
 
+    // A connection made at a name (0.17) has no address and port to state.
+    if (head->family == 1 /* AF_UNIX */ || head->family == 0) return kal_err_not_supported;
     return kal_err_invalid;
 }
 

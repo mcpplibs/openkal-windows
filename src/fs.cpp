@@ -1,4 +1,5 @@
 #include "win.h"
+#include "endpoint.h"   // whether the local family exists (0.17)
 #include "handle.h"
 #include <openkal/fs.h>
 #include <openkal/memory.h>
@@ -49,14 +50,59 @@ kal_duration to_nanoseconds(okw_i64 ticks) {
 // operations later as "no such file".
 struct preopen { char name[okw::kMaxName]; okw_uptr len; okw_uptr handle; };
 
-constexpr kal_uintptr kMaxPreopens = 27;   // the working directory, and 26 volumes
+// The working directory, 26 volumes, and the root of the network's names.
+constexpr kal_uintptr kMaxPreopens = 28;
+
+// A directory of the object manager, by its own name.
+void* open_nt_directory(const wchar_t* nt, unsigned short bytes) {
+    okw::unicode_string u{ bytes, bytes, const_cast<wchar_t*>(nt) };
+    okw::object_attributes attrs{};
+    attrs.length = sizeof attrs;
+    attrs.object_name = &u;
+    attrs.attributes = okw::obj_case_insensitive;
+    okw::io_status_block status{};
+    void* h = nullptr;
+    const long r = okw::NtCreateFile(&h, FILE_LIST_DIRECTORY | SYNCHRONIZE, &attrs, &status, nullptr,
+                                     FILE_ATTRIBUTE_NORMAL,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                     okw::file_open,
+                                     okw::file_directory_file | okw::file_synchronous_io_nonalert,
+                                     nullptr, 0);
+    return okw::ok(r) ? h : nullptr;
+}
+
+SRWLOCK_ g_table_lock{};
+DWORD    g_drives_seen = 0;
 
 preopen* table(kal_uintptr* count) {
     static preopen t[kMaxPreopens];
     static kal_uintptr used = 0;
     static bool opened = false;
+    // A VOLUME MOUNTED SINCE INCEPTION IS APPENDED (K9, openkal 0.17: a
+    // position once given keeps its directory). The system's map of drive
+    // letters is one word, so asking whether one appeared costs one call.
+    if (opened && GetLogicalDrives() != g_drives_seen) {
+        AcquireSRWLockExclusive(&g_table_lock);
+        const DWORD now = GetLogicalDrives();
+        for (int d = 0; d < 26 && used < kMaxPreopens; ++d) {
+            const DWORD bit = 1u << d;
+            if ((now & bit) == 0 || (g_drives_seen & bit) != 0) continue;
+            const wchar_t root[4] = { static_cast<wchar_t>(L'A' + d), L':', L'\\', 0 };
+            void* h = CreateFileW(root, FILE_LIST_DIRECTORY | GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+            if (h == INVALID_HANDLE_VALUE) continue;
+            preopen& slot = t[used];
+            slot.len = okw::narrow(root, 2, slot.name, sizeof slot.name);
+            slot.handle = okw::pack(h);
+            ++used;
+        }
+        g_drives_seen = now;
+        ReleaseSRWLockExclusive(&g_table_lock);
+    }
     if (!opened) {
         opened = true;
+        g_drives_seen = GetLogicalDrives();
 
         // Opened by the whole name this environment uses, and reported by as
         // much of it as openkal's naming wants: a volume is opened as "X:\\"
@@ -94,8 +140,27 @@ preopen* table(kal_uintptr* count) {
                 p += length + 1;
             }
         }
+
+        // THE ROOT OF THE NETWORK'S NAMES (K9). A name `\\server\share\…' is
+        // beneath no volume, and a program supplied only volumes could not
+        // reach it. The object manager names the redirector's root `\??\UNC',
+        // and a name beneath it is opened relative to it like any other; it is
+        // reported as `//', which is how such a name begins.
+        static const wchar_t unc[] = { L'\\', L'?', L'?', L'\\', L'U', L'N', L'C', L'\\', 0 };
+        if (used < kMaxPreopens) {
+            if (void* h = open_nt_directory(unc, 7 * sizeof(wchar_t))) {
+                t[used].name[0] = '/'; t[used].name[1] = '/'; t[used].name[2] = 0;
+                t[used].len = 2;
+                t[used].handle = okw::pack(h);
+                ++used;
+            }
+        }
     }
-    if (count) *count = used;
+    if (count) {
+        AcquireSRWLockExclusive(&g_table_lock);
+        *count = used;
+        ReleaseSRWLockExclusive(&g_table_lock);
+    }
     return t;
 }
 
@@ -651,27 +716,52 @@ int kal_fs_remove(kal_dir base, const char* name, kal_uintptr len) {
     void* h = nullptr;
     // One operation removes a name, and this environment distinguishes two
     // kinds of name where the interface does not, so neither kind is asked for.
+    //
+    // THE NAME, NOT WHAT IT LEADS TO. Opened without `file_open_reparse_point'
+    // a link is followed, so removing a link to a file removed the FILE and
+    // left the link, and a link to a directory could not be removed at all ---
+    // measured since links are made (0.13): a C++ program's `remove_all' of a
+    // directory holding one failed on Windows alone.
     const long r = open_relative(root, name, len, DELETE, okw::file_open,
-                                 okw::file_open_for_backup_intent, &h);
+                                 okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
     if (!okw::ok(r)) return okw::translate_nt(r);
+    // AT ONCE, ALTHOUGH ANOTHER HANDLE HOLDS THE FILE (clause 7.14). The
+    // disposition this system sets by default defers the removal to the last
+    // close, and until then the name stays and refuses every open: measured, a
+    // C++ program in an ok image could not `remove_all' a directory holding
+    // its own lock file, and the same program built for this system could,
+    // because its standard library asks for POSIX semantics. The extended
+    // record asks for them here; a volume or a system without the class answers
+    // with a refusal of the class, and the default disposition is then set,
+    // which is what `kal_fs_props' reports for that volume.
     okw::io_status_block s{};
-    okw::file_disposition_information info{ 1 };
-    const long d = okw::NtSetInformationFile(h, &s, &info, sizeof info,
-                                             okw::file_disposition_information_class);
+    okw::file_disposition_information_ex ex{ okw::file_disposition_delete
+                                             | okw::file_disposition_posix_semantics };
+    long d = okw::NtSetInformationFile(h, &s, &ex, sizeof ex,
+                                       okw::file_disposition_information_ex_class);
+    constexpr long invalid_info_class = static_cast<long>(0xC0000003);
+    constexpr long invalid_parameter  = static_cast<long>(0xC000000D);
+    constexpr long not_supported      = static_cast<long>(0xC00000BB);
+    if (d == invalid_info_class || d == invalid_parameter || d == not_supported) {
+        okw::file_disposition_information info{ 1 };
+        d = okw::NtSetInformationFile(h, &s, &info, sizeof info,
+                                      okw::file_disposition_information_class);
+    }
     okw::NtClose(h);
     return okw::ok(d) ? kal_ok : okw::translate_nt(d);
 }
 
-int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
-                  kal_dir to, const char* b, kal_uintptr blen) {
+static int rename_with(kal_dir from, const char* a, kal_uintptr alen,
+                       kal_dir to, const char* b, kal_uintptr blen, bool replace) {
     void* source_root = dir_handle(from);
     void* target_root = dir_handle(to);
     if (!source_root || !target_root) return kal_err_invalid;
     if (!okw::acceptable(a, alen) || !okw::acceptable(b, blen)) return kal_err_invalid;
 
     void* h = nullptr;
+    // The name is renamed, a link included, never what it leads to.
     const long r = open_relative(source_root, a, alen, DELETE | SYNCHRONIZE,
-                                 okw::file_open, okw::file_open_for_backup_intent, &h);
+                                 okw::file_open, okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
     if (!okw::ok(r)) return okw::translate_nt(r);
 
     okw::wide_name w(b, blen);
@@ -685,7 +775,10 @@ int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
     auto* info = static_cast<okw::file_rename_information*>(
         kal_alloc(storage_bytes, alignof(okw::file_rename_information)));
     if (!info) { okw::NtClose(h); return kal_err_no_memory; }
-    info->replace_if_exists = 1;
+    // A RENAME THAT DOES NOT REPLACE (0.17) is the same record with this one
+    // field clear: the object manager refuses with a name collision and changes
+    // nothing, on every format that renames at all.
+    info->replace_if_exists = replace ? 1 : 0;
     info->root_directory = target_root;
     info->file_name_length = w.string.length;
     for (unsigned i = 0; i < w.string.length / 2; ++i) info->file_name[i] = w.buffer[i];
@@ -697,7 +790,20 @@ int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
         okw::file_rename_information_class);
     okw::NtClose(h);
     kal_free(info, storage_bytes, alignof(okw::file_rename_information));
+    if (!replace && n == static_cast<long>(0xC0000035) /* STATUS_OBJECT_NAME_COLLISION */)
+        return kal_err_exists;
     return okw::ok(n) ? kal_ok : okw::translate_nt(n);
+}
+
+int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
+                  kal_dir to, const char* b, kal_uintptr blen) {
+    return rename_with(from, a, alen, to, b, blen, true);
+}
+
+int kal_fs_rename_flags(kal_dir from, const char* a, kal_uintptr alen,
+                        kal_dir to, const char* b, kal_uintptr blen, kal_uintptr flags) {
+    if ((flags & ~static_cast<kal_uintptr>(KAL_RENAME_NO_REPLACE)) != 0) return kal_err_invalid;
+    return rename_with(from, a, alen, to, b, blen, (flags & KAL_RENAME_NO_REPLACE) == 0);
 }
 
 int kal_fs_list_begin(kal_dir d, kal_uintptr* iter) {
@@ -864,25 +970,236 @@ kal_uintptr kal_fs_props(kal_dir d) {
     // mode of the system; and reading one requires a control code this
     // implementation does not yet issue. Neither is claimed, so a caller asks
     // and is told before it tries, which is what the enquiry is for.
-    if (a.info.attributes & okw::fs_supports_reparse_points) p |= KAL_FS_PROP_LINKS;
+    //
+    // MADE AND READ SINCE 0.13 (K4): a directory's link is a junction, which
+    // needs no privilege; a file's is a symbolic link, which needs the
+    // system's developer mode or a privilege, and is refused with
+    // kal_err_permission where neither is held. Reading is the reparse point's
+    // own control code.
+    if (a.info.attributes & okw::fs_supports_reparse_points)
+        p |= KAL_FS_PROP_LINKS | KAL_FS_PROP_MAKE_LINKS;
+    // A rename that does not replace is a field of the rename record (0.17).
+    p |= KAL_FS_PROP_RENAME_NO_REPLACE;
+    // A name held open is removed at once (0.17, clause 7.14) where the volume
+    // takes the extended disposition's POSIX semantics, which it reports.
+    if (a.info.attributes & okw::fs_supports_posix_unlink_rename)
+        p |= KAL_FS_PROP_REMOVE_OPEN;
+    // A socket bound to a name (0.17) is stored as a reparse point of its own
+    // kind, on a volume that has them, by a system whose network interface
+    // offers the local family.
+    if ((a.info.attributes & okw::fs_supports_reparse_points) && okw::local_family_available())
+        p |= KAL_FS_PROP_LOCAL_ENDPOINT;
     return p;
 }
 
-// Nodes whose content is another name.
+// Nodes whose content is another name (K4, 0.13).
 //
-// Refused, and the enquiry above says so in advance. Creating one on this
-// system requires SeCreateSymbolicLinkPrivilege or the system's developer mode,
-// and reading one requires a file-system control code this implementation does
-// not issue. A caller reads KAL_FS_PROP_MAKE_LINKS --- which is not claimed
-// here --- rather than discovering it by the attempt.
-int kal_fs_link_create(kal_dir, const char*, kal_uintptr,
-                       const char*, kal_uintptr, kal_uintptr) {
-    return kal_err_not_supported;
+// A FILE'S LINK IS A SYMBOLIC LINK, made with the flag that asks for one without
+// the privilege: the system grants it in developer mode, and otherwise refuses
+// with ERROR_PRIVILEGE_NOT_HELD, which is reported as kal_err_permission --- a
+// condition of the caller and not of the volume.
+//
+// A DIRECTORY'S LINK IS A SYMBOLIC LINK WHERE ONE CAN BE MADE, AND A JUNCTION
+// WHERE IT CANNOT. A junction needs no privilege and is what this system's own
+// tools make for a directory; it differs in one respect the header states the
+// interface does not have: its content is an absolute name, so a relative
+// target is resolved against the link's directory when the junction is made,
+// and `kal_fs_link_read' then reports the absolute name. Measured: a junction
+// to a directory that does not exist yet is made, and reached once it exists.
+namespace {
+// The directory's own name, as this system resolves it, without the prefix
+// that marks a name the system must not parse (`\\?\').
+okw_uptr final_name(void* h, wchar_t* out, okw_uptr cap) {
+    const DWORD n = GetFinalPathNameByHandleW(h, out, static_cast<DWORD>(cap), 0);
+    if (n == 0 || n >= cap) return 0;
+    okw_uptr skip = (n >= 4 && out[0] == L'\\' && out[1] == L'\\' && out[2] == L'?' && out[3] == L'\\') ? 4 : 0;
+    if (skip && n >= 8 && out[4] == L'U' && out[5] == L'N' && out[6] == L'C' && out[7] == L'\\') {
+        // \\?\UNC\server\share  ->  \\server\share
+        for (okw_uptr i = 8; i <= n; ++i) out[i - 6] = out[i];
+        out[0] = L'\\'; out[1] = L'\\';
+        return n - 6;
+    }
+    for (okw_uptr i = skip; i <= n; ++i) out[i - skip] = out[i];
+    return n - skip;
 }
 
-kal_intptr kal_fs_link_read(kal_dir, const char*, kal_uintptr,
-                            char*, kal_uintptr) {
-    return -kal_err_not_supported;
+bool absolute_wide(const wchar_t* w, okw_uptr n) {
+    return (n >= 2 && w[1] == L':') || (n >= 2 && w[0] == L'\\' && w[1] == L'\\');
+}
+
+// `base\target', with `.' and `..' taken out lexically, for a junction.
+okw_uptr resolve_beside(const wchar_t* dir, okw_uptr dn, const wchar_t* t, okw_uptr tn,
+                        wchar_t* out, okw_uptr cap) {
+    okw_uptr at = 0;
+    auto put = [&](wchar_t c) { if (at + 1 < cap) out[at++] = c; };
+    if (absolute_wide(t, tn)) { for (okw_uptr i = 0; i < tn; ++i) put(t[i] == L'/' ? L'\\' : t[i]); }
+    else {
+        for (okw_uptr i = 0; i < dn; ++i) put(dir[i]);
+        for (okw_uptr i = 0; i < tn; ) {
+            okw_uptr j = i; while (j < tn && t[j] != L'/' && t[j] != L'\\') ++j;
+            const okw_uptr len = j - i;
+            if (len == 1 && t[i] == L'.') {}
+            else if (len == 2 && t[i] == L'.' && t[i + 1] == L'.') {
+                while (at > 3 && out[at - 1] != L'\\') --at;
+                if (at > 3) --at;
+            } else if (len > 0) {
+                if (at == 0 || out[at - 1] != L'\\') put(L'\\');
+                for (okw_uptr k = i; k < j; ++k) put(t[k]);
+            }
+            i = j + 1;
+        }
+    }
+    out[at] = 0;
+    return at;
+}
+
+struct reparse_mount_point {
+    DWORD tag; unsigned short length; unsigned short reserved;
+    unsigned short substitute_offset, substitute_length, print_offset, print_length;
+    wchar_t buffer[1];
+};
+struct reparse_symlink {
+    DWORD tag; unsigned short length; unsigned short reserved;
+    unsigned short substitute_offset, substitute_length, print_offset, print_length;
+    unsigned long flags;
+    wchar_t buffer[1];
+};
+}  // namespace
+
+int kal_fs_link_create(kal_dir base, const char* name, kal_uintptr len,
+                       const char* target, kal_uintptr target_len, kal_uintptr flags) {
+    void* root = dir_handle(base);
+    if (!root || !okw::acceptable(name, len) || target == nullptr || target_len == 0)
+        return kal_err_invalid;
+    if ((flags & ~static_cast<kal_uintptr>(KAL_FS_LINK_DIRECTORY)) != 0) return kal_err_invalid;
+    if ((kal_fs_props(base) & KAL_FS_PROP_MAKE_LINKS) == 0) return kal_err_not_supported;
+
+    struct scratch { wchar_t dir[okw::kMaxName]; wchar_t link[okw::kMaxName];
+                     wchar_t target[okw::kMaxName]; wchar_t resolved[okw::kMaxName];
+                     unsigned char reparse[16384]; };
+    auto* w = static_cast<scratch*>(kal_alloc(sizeof(scratch), alignof(scratch)));
+    if (!w) return kal_err_no_memory;
+    struct releaser { scratch* p; ~releaser() { kal_free(p, sizeof(scratch), alignof(scratch)); } } guard{ w };
+
+    const okw_uptr dn = final_name(root, w->dir, okw::kMaxName);
+    if (dn == 0) return okw::translate_win32(GetLastError());
+    okw::wide_name wn(name, len), wt(target, target_len);
+    if (!wn.ok || !wt.ok) return kal_err_invalid;
+    const okw_uptr nn = wn.string.length / 2, tn = wt.string.length / 2;
+    if (dn + 1 + nn + 1 >= okw::kMaxName || tn + 1 >= okw::kMaxName) return kal_err_invalid;
+    okw_uptr at = 0;
+    for (okw_uptr i = 0; i < dn; ++i) w->link[at++] = w->dir[i];
+    w->link[at++] = L'\\';
+    for (okw_uptr i = 0; i < nn; ++i) w->link[at++] = wn.buffer[i] == L'/' ? L'\\' : wn.buffer[i];
+    w->link[at] = 0;
+    for (okw_uptr i = 0; i < tn; ++i) w->target[i] = wt.buffer[i] == L'/' ? L'\\' : wt.buffer[i];
+    w->target[tn] = 0;
+
+    const bool directory = (flags & KAL_FS_LINK_DIRECTORY) != 0;
+    const DWORD sym_flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+                          | (directory ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0u);
+    const bool made = CreateSymbolicLinkW(w->link, w->target, sym_flags) != 0;
+    const DWORD why = made ? 0 : GetLastError();
+    // THE NODE IS ASKED FOR, AND NOT ONLY THE RESULT. Measured on the
+    // continuous-integration runners: the call reported failure and the link
+    // was there, reading back what was asked for. What a caller acts upon is
+    // the node, so the node is what decides.
+    {
+        void* probe = nullptr;
+        if (okw::ok(open_relative(root, name, len, FILE_READ_ATTRIBUTES | SYNCHRONIZE, okw::file_open,
+                                  okw::file_open_reparse_point | okw::file_open_for_backup_intent, &probe))) {
+            okw::file_basic_information basic{};
+            okw::io_status_block s{};
+            const bool link = okw::ok(okw::NtQueryInformationFile(probe, &s, &basic, sizeof basic,
+                                                                  okw::file_basic_information_class))
+                              && (basic.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            okw::NtClose(probe);
+            if (link) return kal_ok;
+        }
+    }
+    if (made) return kal_err_io;
+    if (why != ERROR_PRIVILEGE_NOT_HELD) return okw::translate_win32(why);
+    if (!directory) return kal_err_permission;
+
+    // A junction. The directory the name leads to (`name' may have components
+    // of its own) is what a relative target is beside.
+    okw_uptr parent = at;
+    while (parent > dn && w->link[parent - 1] != L'\\') --parent;
+    const okw_uptr rn = resolve_beside(w->link, parent ? parent - 1 : 0, w->target, tn,
+                                       w->resolved, okw::kMaxName);
+    if (rn == 0) return kal_err_invalid;
+
+    void* h = nullptr;
+    long r = open_relative(root, name, len, FILE_WRITE_ATTRIBUTES | DELETE | SYNCHRONIZE,
+                           okw::file_create,
+                           okw::file_directory_file | okw::file_open_reparse_point
+                           | okw::file_open_for_backup_intent, &h);
+    if (!okw::ok(r)) return okw::translate_nt(r);
+    auto* rp = reinterpret_cast<reparse_mount_point*>(w->reparse);
+    const okw_uptr sub = 4 + rn, print = rn;                 // "\??\" + name
+    const okw_uptr bytes = (sub + 1 + print + 1) * sizeof(wchar_t);
+    if (16 + bytes > sizeof w->reparse) { okw::NtClose(h); return kal_err_invalid; }
+    rp->tag = IO_REPARSE_TAG_MOUNT_POINT;
+    rp->length = static_cast<unsigned short>(8 + bytes);
+    rp->reserved = 0;
+    rp->substitute_offset = 0;
+    rp->substitute_length = static_cast<unsigned short>(sub * sizeof(wchar_t));
+    rp->print_offset = static_cast<unsigned short>((sub + 1) * sizeof(wchar_t));
+    rp->print_length = static_cast<unsigned short>(print * sizeof(wchar_t));
+    const wchar_t prefix[4] = { L'\\', L'?', L'?', L'\\' };
+    okw_uptr k = 0;
+    for (wchar_t c : prefix) rp->buffer[k++] = c;
+    for (okw_uptr i = 0; i < rn; ++i) rp->buffer[k++] = w->resolved[i];
+    rp->buffer[k++] = 0;
+    for (okw_uptr i = 0; i < rn; ++i) rp->buffer[k++] = w->resolved[i];
+    rp->buffer[k++] = 0;
+    DWORD returned = 0;
+    if (!DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, rp, static_cast<DWORD>(8 + rp->length),
+                         nullptr, 0, &returned, nullptr)) {
+        const DWORD e = GetLastError();
+        okw::file_disposition_information gone{ 1 };
+        okw::io_status_block s{};
+        okw::NtSetInformationFile(h, &s, &gone, sizeof gone, okw::file_disposition_information_class);
+        okw::NtClose(h);
+        return okw::translate_win32(e);
+    }
+    okw::NtClose(h);
+    return kal_ok;
+}
+
+kal_intptr kal_fs_link_read(kal_dir base, const char* name, kal_uintptr len,
+                            char* out, kal_uintptr cap) {
+    void* root = dir_handle(base);
+    if (!root || !okw::acceptable(name, len)) return -kal_err_invalid;
+    void* h = nullptr;
+    const long r = open_relative(root, name, len, FILE_READ_ATTRIBUTES | SYNCHRONIZE, okw::file_open,
+                                 okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
+    if (!okw::ok(r)) return -okw::translate_nt(r);
+    alignas(8) unsigned char buf[16384];
+    DWORD got = 0;
+    const BOOL ok = DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, nullptr, 0, buf, sizeof buf, &got, nullptr);
+    const DWORD why = ok ? 0 : GetLastError();
+    okw::NtClose(h);
+    if (!ok) return why == 4390 /* ERROR_NOT_A_REPARSE_POINT */ ? -kal_err_invalid
+                                                                : -okw::translate_win32(why);
+    const DWORD tag = *reinterpret_cast<const DWORD*>(buf);
+    const wchar_t* text = nullptr; okw_uptr n = 0; bool strip = false;
+    if (tag == IO_REPARSE_TAG_SYMLINK) {
+        const auto* s = reinterpret_cast<const reparse_symlink*>(buf);
+        if (s->print_length) { text = s->buffer + s->print_offset / 2; n = s->print_length / 2; }
+        else { text = s->buffer + s->substitute_offset / 2; n = s->substitute_length / 2; strip = (s->flags & 1u) == 0; }
+    } else if (tag == IO_REPARSE_TAG_MOUNT_POINT) {
+        const auto* m = reinterpret_cast<const reparse_mount_point*>(buf);
+        if (m->print_length) { text = m->buffer + m->print_offset / 2; n = m->print_length / 2; }
+        else { text = m->buffer + m->substitute_offset / 2; n = m->substitute_length / 2; strip = true; }
+    } else {
+        return -kal_err_invalid;      // a reparse point that is not a link
+    }
+    if (strip && n >= 4 && text[0] == L'\\' && text[1] == L'?' && text[2] == L'?' && text[3] == L'\\') { text += 4; n -= 4; }
+    char narrow[3 * okw::kMaxName];
+    const okw_uptr m = okw::narrow(text, n, narrow, sizeof narrow);
+    if (out != nullptr && cap != 0) put_bytes(out, narrow, m < cap ? m : cap);
+    return static_cast<kal_intptr>(m);
 }
 
 }
