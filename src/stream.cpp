@@ -168,6 +168,7 @@ kal_intptr kal_stream_read(kal_stream s, void* buf, kal_uintptr len) {
     void* h = handle_of(s);
     if (!valid(h)) return -kal_err_invalid;
     const bool socket = okw::is_socket_handle(h);
+    if (socket && okw::read_ended(reinterpret_cast<SOCKET>(h))) return 0;
     const DWORD want = len > 0x7fffffffu ? 0x7fffffffu : static_cast<DWORD>(len);
     DWORD got = 0;
     DWORD err = 0;
@@ -180,11 +181,10 @@ kal_intptr kal_stream_read(kal_stream s, void* buf, kal_uintptr len) {
         // this environment reports it as a failure. A caller that could not
         // tell the two apart would treat every completed transfer as broken.
         if (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF) return 0;
-        // A socket whose read direction was ended: the read waiting when it
-        // ended is cancelled (src/net.cpp, kal_net_shutdown) and every later
-        // one is refused with WSAESHUTDOWN. Both are the end of input, as the
-        // other two systems report it.
-        if (socket && (err == ERROR_OPERATION_ABORTED || err == 10058 /* WSAESHUTDOWN */)) return 0;
+        // A socket whose read direction was ended while this read waited: the
+        // read was cancelled (src/net.cpp, kal_net_shutdown), and it is the
+        // end of input, as the other two systems report it.
+        if (socket && okw::read_ended(reinterpret_cast<SOCKET>(h))) return 0;
         return -okw::translate_win32(err);
     }
     // A short read is reported as it occurred: unlike a short write it carries

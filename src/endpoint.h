@@ -215,6 +215,15 @@ inline bool is_socket_handle(void* h) {
     return n->sockname(reinterpret_cast<SOCKET>(h), &ss, &len) == 0;
 }
 
+// The sockets whose read direction this program ended (kal_net_shutdown, 0.17).
+// A read upon one is the end of input, which the other two systems report and
+// this one does not: an overlapped receive pending at `shutdown(SD_RECEIVE)'
+// stays pending, and a later one fails with an error rather than ending. The
+// record is this implementation's, so the answer does not depend on which
+// error the system chose (src/net.cpp).
+void note_read_ended(SOCKET s, bool ended);
+bool read_ended(SOCKET s);
+
 // ── addresses ───────────────────────────────────────────────────────────────
 
 // The port is carried in host order by kal_endpoint and in network order by the

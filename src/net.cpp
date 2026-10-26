@@ -1,6 +1,45 @@
 #include "win.h"
 #include "endpoint.h"
 #include <openkal/net.h>
+#include <openkal/memory.h>
+
+namespace okw {
+namespace {
+SRWLOCK_   g_ended_lock{};
+SOCKET*    g_ended = nullptr;
+kal_uintptr g_ended_count = 0, g_ended_capacity = 0;
+}  // namespace
+
+void note_read_ended(SOCKET s, bool ended) {
+    AcquireSRWLockExclusive(&g_ended_lock);
+    kal_uintptr at = g_ended_count;
+    for (kal_uintptr i = 0; i < g_ended_count; ++i) if (g_ended[i] == s) { at = i; break; }
+    if (ended && at == g_ended_count) {
+        if (g_ended_count == g_ended_capacity) {
+            const kal_uintptr capacity = g_ended_capacity ? g_ended_capacity * 2 : 16;
+            auto* grown = static_cast<SOCKET*>(kal_alloc(capacity * sizeof(SOCKET), alignof(SOCKET)));
+            if (grown) {
+                for (kal_uintptr i = 0; i < g_ended_count; ++i) grown[i] = g_ended[i];
+                if (g_ended) kal_free(g_ended, g_ended_capacity * sizeof(SOCKET), alignof(SOCKET));
+                g_ended = grown;
+                g_ended_capacity = capacity;
+            }
+        }
+        if (g_ended_count < g_ended_capacity) g_ended[g_ended_count++] = s;
+    } else if (!ended && at < g_ended_count) {
+        g_ended[at] = g_ended[--g_ended_count];
+    }
+    ReleaseSRWLockExclusive(&g_ended_lock);
+}
+
+bool read_ended(SOCKET s) {
+    AcquireSRWLockExclusive(&g_ended_lock);
+    bool found = false;
+    for (kal_uintptr i = 0; i < g_ended_count && !found; ++i) found = g_ended[i] == s;
+    ReleaseSRWLockExclusive(&g_ended_lock);
+    return found;
+}
+}  // namespace okw
 
 // openkal.net upon this system's network interface.
 //
@@ -246,13 +285,17 @@ int kal_net_shutdown(kal_net_conn c, int direction) {
     // here and src/stream.cpp reports the cancelled read as that end. Measured:
     // a program that ended a connection from another context waited two
     // minutes for its reader, on this system alone.
-    if (how != SD_SEND_) CancelIoEx(reinterpret_cast<HANDLE>(s), nullptr);
+    if (how != SD_SEND_) {
+        okw::note_read_ended(s, true);
+        CancelIoEx(reinterpret_cast<HANDLE>(s), nullptr);
+    }
     return kal_ok;
 }
 
 void kal_net_close(kal_net_conn c) {
     const SOCKET s = socket_of(c);
     if (bad(s)) return;
+    okw::note_read_ended(s, false);   // the number may be given to another socket
     if (auto* n = net()) n->close(s);
     okw::retire(c.h);
 }

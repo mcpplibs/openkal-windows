@@ -190,6 +190,10 @@ kal_intptr kal_timeout_read(kal_stream s, void* buf, kal_uintptr len, kal_u64 ns
     // A transfer of zero bytes does not wait and is not bounded. Waiting first
     // would turn a call that always succeeds into one that can expire.
     if (len == 0) return 0;
+    // A socket whose read direction this program ended is at its end, at
+    // once: the system reports no readiness for it (src/net.cpp).
+    if (shape_of(static_cast<SOCKET>(s.h)) == shape::socket && okw::read_ended(static_cast<SOCKET>(s.h)))
+        return 0;
 
     if (const int rc = await_stream(s, POLLRDNORM_, ns); rc != kal_ok)
         return -rc;
