@@ -1,6 +1,9 @@
 #include "win.h"
 #include "endpoint.h"
 #include <openkal/timeout.h>
+#include <openkal/process.h>
+
+namespace okw { void* process_handle(kal_process p); }
 
 // openkal.timeout on this system.
 //
@@ -227,7 +230,11 @@ kal_intptr kal_timeout_recv_from(kal_datagram d, void* buf, kal_uintptr len,
 }
 
 int kal_timeout_wait_process(kal_process p, kal_u64 ns, int* status, int* terminated) {
-    void* h = okw::unpack(p.h);
+    // THE WORD'S KIND DECIDES WHAT IT NAMES (0.13.2). A program started with a
+    // bound lifetime is named by its record, and reading the word as a handle
+    // waited upon nothing: every bounded wait for such a program failed, so a
+    // caller bounding it waited without a bound or not at all.
+    void* h = okw::process_handle(p);
     if (h == nullptr) return kal_err_invalid;
 
     // THE ONE OPERATION OF THIS INTERFACE THIS SYSTEM PROVIDES DIRECTLY. The

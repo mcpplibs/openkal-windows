@@ -267,6 +267,18 @@ inline void* process_of(kal_process p) {
     }
 }
 
+
+}  // namespace
+
+namespace okw {
+// The process handle a word names, for the operations outside this file that
+// wait on a started program (timeout.cpp): a word of a program started with a
+// bound lifetime names its record, not its handle (0.13.2).
+void* process_handle(kal_process p) { return process_of(p); }
+}  // namespace okw
+
+namespace {
+
 // EVERY ENVIRONMENT ENTRY IS `NAME=value' (0.17, process.h).
 bool entries_well_formed(const char** envp, const kal_uintptr* lens, kal_uintptr n) {
     for (kal_uintptr i = 0; i < n; ++i) {
