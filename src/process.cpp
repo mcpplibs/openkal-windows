@@ -337,7 +337,9 @@ int kal_process_spawn(const kal_spawn* how,
     if (!dir || !run) return kal_err_invalid;
     if (!okw::acceptable(path, path_len)) return kal_err_invalid;
     if (how->grant_count > 0) return kal_err_not_supported;
-    if ((how->flags & ~KAL_SPAWN_BOUND_LIFETIME) != 0) return kal_err_not_supported;
+    if ((how->flags & ~(KAL_SPAWN_BOUND_LIFETIME | KAL_SPAWN_ONE_STRING)) != 0) return kal_err_not_supported;
+    // Clause 7.6, 0.17.1: the elements after the first joined as they are.
+    const bool one_string = (how->flags & KAL_SPAWN_ONE_STRING) != 0;
     if (envc > 0 && (envp == nullptr || envp_lens == nullptr)) return kal_err_invalid;
     if (!entries_well_formed(envp, envp_lens, envc)) return kal_err_invalid;
     const bool bound = (how->flags & KAL_SPAWN_BOUND_LIFETIME) != 0;
@@ -421,8 +423,13 @@ int kal_process_spawn(const kal_spawn* how,
         const okw_uptr room = kCommandLine - 1;
         if (!append_utf8(one, room, produced, argv[i], argv_lens[i]))
             return argv_lens[i] >= room ? kal_err_no_space : kal_err_invalid;
-        if (!append_quoted(line, kCommandLine, used, one, produced))
+        if (one_string && i > 0) {
+            // KAL_SPAWN_ONE_STRING: the program parses this string by rules of
+            // its own (the command interpreter's /c), so it is passed as it is.
+            if (!append_wide(line, kCommandLine, used, one, produced)) return kal_err_no_space;
+        } else if (!append_quoted(line, kCommandLine, used, one, produced)) {
             return kal_err_no_space;
+        }
     }
     line[used] = 0;
     if (argc == 0) line[0] = 0;
@@ -796,6 +803,7 @@ kal_uintptr kal_process_props(void) { return
   | KAL_PROCESS_PROP_JOB
   | KAL_PROCESS_PROP_BOUND_LIFETIME    // K5: a job that ends with this program
   | KAL_PROCESS_PROP_STOP_REQUESTED    // K3: the routine handles, and the word is read
-  | KAL_PROCESS_PROP_OPEN_ID; }
+  | KAL_PROCESS_PROP_OPEN_ID
+  | KAL_PROCESS_PROP_ONE_STRING; }   // 0.17.1: a program here receives one string
 
 }
