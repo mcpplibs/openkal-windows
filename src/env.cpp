@@ -45,10 +45,28 @@ const char* store(const wchar_t* w, int wlen, okw_uptr& out_len) {
 
 int wide_length(const wchar_t* w) { int n = 0; while (w && w[n]) ++n; return n; }
 
-void prepare() {
-    if (g_ready) return;
-    g_ready = true;
+// ONCE, AND NOT TWICE AT ONCE (0.13.3). The first callers of two threads met
+// here: one marked the tables ready and filled them while the other read them
+// empty, so a
+// variable that was set --- PATH --- was reported absent to a program that
+// asked from two threads at the start. Measured in mcpp, whose two threads
+// starting `hostname' and `ping' found one of them "not on PATH". The filling
+// happens under a slim lock, and every caller takes it, which also orders its
+// reads after the filling.
+SRWLOCK_ g_prepare_lock{};
 
+void fill();
+
+void prepare() {
+    AcquireSRWLockExclusive(&g_prepare_lock);
+    if (!g_ready) {
+        fill();
+        g_ready = true;
+    }
+    ReleaseSRWLockExclusive(&g_prepare_lock);
+}
+
+void fill() {
     int count = 0;
     wchar_t** parts = CommandLineToArgvW(GetCommandLineW(), &count);
     if (parts) {
@@ -99,6 +117,7 @@ void prepare() {
         }
         FreeEnvironmentStringsW(block);
     }
+
 }
 
 bool same(const char* a, okw_uptr alen, const char* b, okw_uptr blen) {

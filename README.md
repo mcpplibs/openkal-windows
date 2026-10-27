@@ -7,7 +7,7 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 openkal = "0.17.1"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.13.2"
+openkal-windows = "0.13.3"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was

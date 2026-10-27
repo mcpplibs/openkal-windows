@@ -114,9 +114,25 @@ int await(SOCKET s, short events, kal_u64 ns) {
 // `ERROR_BROKEN_PIPE', and a read that follows reports the end of input without
 // waiting --- which is what readiness asserts. Reporting the failure here would
 // make a program that reads until end-of-input wait for ever instead.
+//
+// THE BOUND IS MEASURED, NOT COUNTED (0.13.3). The loop counted its sleeps as
+// milliseconds, and `Sleep(1)' sleeps until the next tick of the system's timer
+// --- 15.6 ms by default --- so a 100 ms bound waited about a second and a
+// half. Measured through mcpplibs.os: a program whose bounded read of 100 ms
+// should have expired received input written 400 ms after it began. The time
+// passed is read from the performance counter.
 int await_pipe(HANDLE h, kal_u64 ns) {
     const int ms = bound_ms(ns);
-    kal_u64 waited = 0;
+    LARGE_INTEGER frequency{}, started{};
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&started);
+    auto waited_ms = [&]() -> kal_u64 {
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        if (frequency.QuadPart <= 0) return static_cast<kal_u64>(ms);
+        return static_cast<kal_u64>(now.QuadPart - started.QuadPart) * 1000u
+             / static_cast<kal_u64>(frequency.QuadPart);
+    };
     for (;;) {
         DWORD available = 0;
         if (!PeekNamedPipe(h, nullptr, 0, nullptr, &available, nullptr)) {
@@ -131,11 +147,10 @@ int await_pipe(HANDLE h, kal_u64 ns) {
         }
         if (available > 0) return kal_ok;
         if (ms == 0) return kal_err_again;
-        if (ms > 0 && waited >= static_cast<kal_u64>(ms)) return kal_err_again;
+        if (ms > 0 && waited_ms() >= static_cast<kal_u64>(ms)) return kal_err_again;
         // The interval this interface reports as its granularity, so the cost of
         // the loop is the number already stated rather than a second one.
         Sleep(1);
-        waited += 1;
     }
 }
 
