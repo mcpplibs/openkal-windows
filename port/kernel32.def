@@ -9,6 +9,7 @@ AssignProcessToJobObject
 CancelIoEx
 CloseHandle
 CreateEventW
+CreateFileMappingW
 CreateFileW
 CreateJobObjectW
 CreatePipe
@@ -20,6 +21,7 @@ DeviceIoControl
 ExitProcess
 FlushFileBuffers
 FlushInstructionCache
+FlushViewOfFile
 FreeEnvironmentStringsW
 GetCommandLineW
 GetConsoleMode
@@ -51,6 +53,7 @@ HeapFree
 InitializeProcThreadAttributeList
 LoadLibraryW
 LocalFree
+MapViewOfFile
 MultiByteToWideChar
 OpenProcess
 PeekNamedPipe
@@ -68,6 +71,7 @@ Sleep
 SwitchToThread
 TerminateJobObject
 TerminateProcess
+UnmapViewOfFile
 UpdateProcThreadAttribute
 VirtualAlloc
 VirtualFree
