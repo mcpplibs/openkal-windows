@@ -262,7 +262,7 @@ jobs:
           # seventh is absent from the list for the same reason it is absent
           # from the objects.
           bash .spec/tools/run-conformance.sh openkal-windows . \
-            full,exec,random,terminal,net,datagram,timeout $extra
+            full,exec,random,terminal,net,datagram,timeout,map $extra
 
       # run-conformance.sh above has already pointed the manifest at the
       # specification's working tree and restored it through a trap; this
@@ -447,7 +447,7 @@ jobs:
           WINEDEBUG: '-all'
         run: |
           bash .spec/tools/run-conformance.sh openkal-windows . \
-            full,exec,random,terminal,net,datagram,timeout \
+            full,exec,random,terminal,net,datagram,timeout,map \
             --target x86_64-windows-gnu
 
       - name: The exported surface is complete and contains nothing else
