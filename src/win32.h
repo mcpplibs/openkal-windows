@@ -276,6 +276,9 @@ enum : DWORD {
     ERROR_DIRECTORY             = 267,
     ERROR_DIR_NOT_EMPTY         = 145,
     ERROR_IO_PENDING            = 997,
+    // A file that holds a mapped view refuses to be shortened (openkal 0.18,
+    // openkal.map): kal_err_permission, which map.h names for this refusal.
+    ERROR_USER_MAPPED_FILE      = 1224,
 
     // For openkal.exec.
     MEM_COMMIT   = 0x00001000u,
@@ -283,6 +286,13 @@ enum : DWORD {
     MEM_RELEASE  = 0x00008000u,
     PAGE_READWRITE      = 0x04u,
     PAGE_EXECUTE_READ   = 0x20u,
+
+    // For openkal.map.
+    PAGE_READONLY       = 0x02u,
+    PAGE_WRITECOPY      = 0x08u,
+    FILE_MAP_COPY       = 0x0001u,
+    FILE_MAP_WRITE      = 0x0002u,
+    FILE_MAP_READ       = 0x0004u,
 };
 
 // ── the functions ───────────────────────────────────────────────────────────
@@ -432,6 +442,14 @@ OKW_IMPORT int    OKW_API WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR, 
 // specification targets, and the third is the one that matters on a processor
 // whose instruction path does not see the data path's writes.
 OKW_IMPORT LPVOID OKW_API VirtualAlloc(LPVOID, unsigned long long, DWORD, DWORD);
+
+// A part of a file in the address space, for openkal.map. The section object
+// is closed as soon as its view exists, which keeps it alive; a view is
+// released by its address alone.
+OKW_IMPORT HANDLE OKW_API CreateFileMappingW(HANDLE, SECURITY_ATTRIBUTES*, DWORD, DWORD, DWORD, LPCWSTR);
+OKW_IMPORT LPVOID OKW_API MapViewOfFile(HANDLE, DWORD, DWORD, DWORD, unsigned long long);
+OKW_IMPORT BOOL   OKW_API UnmapViewOfFile(LPCVOID);
+OKW_IMPORT BOOL   OKW_API FlushViewOfFile(LPCVOID, unsigned long long);
 
 // What this system reports about itself. Only two fields are read and the rest
 // are named so that the record has the layout the system writes.

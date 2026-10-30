@@ -44,7 +44,8 @@ int translate_win32(unsigned long e) {
         case ERROR_HANDLE_DISK_FULL:        return kal_err_no_space;
         case ERROR_ACCESS_DENIED:
         case ERROR_WRITE_PROTECT:
-        case ERROR_SHARING_VIOLATION:       return kal_err_permission;
+        case ERROR_SHARING_VIOLATION:
+        case ERROR_USER_MAPPED_FILE:        return kal_err_permission;
         case ERROR_CALL_NOT_IMPLEMENTED:
         case ERROR_NOT_SUPPORTED:
         case ERROR_INVALID_FUNCTION:        return kal_err_not_supported;
