@@ -197,6 +197,72 @@ int kal_task_wake(const kal_u32* word, kal_uintptr count, kal_uintptr* woken) {
 // this implementation doing anything to earn it.
 kal_uintptr kal_task_props(void) { return
     KAL_TASK_PROP_PREEMPTIVE | KAL_TASK_PROP_PARALLEL
-  | KAL_TASK_PROP_WAIT_TIMEOUT | KAL_TASK_PROP_THREAD_LOCAL; }
+  | KAL_TASK_PROP_WAIT_TIMEOUT | KAL_TASK_PROP_THREAD_LOCAL
+  | KAL_TASK_PROP_PRIORITY; }
+
+// THE PHYSICAL CORES BENEATH THE PROCESSORS THIS PROGRAM MAY RUN ON. The system
+// lists each core with the processors of it (RelationProcessorCore); a core
+// counts when one of its processors is in the process's affinity mask --- of
+// processor group 0, which is the set kal_task_parallelism counts here, so the
+// two answers are about the same processors. Zero is "cannot say".
+kal_uintptr kal_task_cores(void) {
+    unsigned long long process = 0, system = 0;
+    if (!GetProcessAffinityMask(GetCurrentProcess(), &process, &system)) return 0;
+    DWORD length = 0;
+    GetLogicalProcessorInformationEx(0 /* RelationProcessorCore */, nullptr, &length);
+    if (length == 0) return 0;
+    auto* buffer = static_cast<unsigned char*>(kal_alloc(length, 16));
+    if (!buffer) return 0;
+    kal_uintptr cores = 0;
+    if (GetLogicalProcessorInformationEx(0, buffer, &length)) {
+        // SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX: Relationship and Size, then
+        // PROCESSOR_RELATIONSHIP, whose GroupCount is at 30 and whose first
+        // GROUP_AFFINITY (Mask, then Group) is at 32.
+        for (DWORD at = 0; at + 48 <= length;) {
+            const unsigned char* record = buffer + at;
+            DWORD size = 0;
+            for (int i = 0; i < 4; ++i) size |= static_cast<DWORD>(record[4 + i]) << (8 * i);
+            if (size == 0) break;
+            unsigned long long mask = 0;
+            for (int i = 0; i < 8; ++i) mask |= static_cast<unsigned long long>(record[32 + i]) << (8 * i);
+            const unsigned group = static_cast<unsigned>(record[40]) | (static_cast<unsigned>(record[41]) << 8);
+            if (group == 0 && (mask & process)) ++cores;
+            at += size;
+        }
+    }
+    kal_free(buffer, length, 16);
+    return cores;
+}
+
+// THE CALLING THREAD'S CLAIM. Background mode lowers the thread's processor,
+// I/O and memory priority together, which is this system's word for work that
+// runs when nothing else wants the machine; below-normal is the lower claim
+// short of it. Each other claim first leaves background mode. A thread may
+// raise its own priority within its process's class.
+int kal_task_set_priority(kal_uintptr priority) {
+    constexpr int kBackgroundBegin = 0x00010000, kBackgroundEnd = 0x00020000;
+    constexpr int kNormal = 0, kBelowNormal = -1;
+    if (priority != KAL_TASK_PRIORITY_DEFAULT && priority != KAL_TASK_PRIORITY_LOW
+        && priority != KAL_TASK_PRIORITY_BACKGROUND)
+        return kal_err_invalid;
+    HANDLE self = GetCurrentThread();
+    if (priority == KAL_TASK_PRIORITY_BACKGROUND) {
+        if (!SetThreadPriority(self, kNormal)) return okw::translate_win32(GetLastError());
+        if (SetThreadPriority(self, kBackgroundBegin) || GetLastError() == 402 /* ERROR_THREAD_MODE_ALREADY_BACKGROUND */)
+            return kal_ok;
+        // AN ENVIRONMENT WITHOUT BACKGROUND MODE (Wine refuses it) is given the
+        // scheduling half of it: the idle priority, the lowest a thread may
+        // set for itself.
+        constexpr int kIdle = -15;   // THREAD_PRIORITY_IDLE
+        return SetThreadPriority(self, kIdle) ? kal_ok : okw::translate_win32(GetLastError());
+    }
+    // Leaving background mode is refused to a thread not in it, and by an
+    // environment without the mode; in either the thread was not in it, and
+    // the claim below is what decides the answer.
+    SetThreadPriority(self, kBackgroundEnd);
+    if (!SetThreadPriority(self, priority == KAL_TASK_PRIORITY_LOW ? kBelowNormal : kNormal))
+        return okw::translate_win32(GetLastError());
+    return kal_ok;
+}
 
 }
