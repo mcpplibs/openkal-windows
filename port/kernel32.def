@@ -29,6 +29,7 @@ GetConsoleScreenBufferInfo
 GetCurrentDirectoryW
 GetCurrentProcess
 GetCurrentProcessId
+GetCurrentThread
 GetCurrentThreadId
 GetCurrentThreadStackLimits
 GetEnvironmentStringsW
@@ -39,9 +40,11 @@ GetHandleInformation
 GetLastError
 GetLogicalDriveStringsW
 GetLogicalDrives
+GetLogicalProcessorInformationEx
 GetModuleFileNameW
 GetOverlappedResult
 GetProcAddress
+GetProcessAffinityMask
 GetProcessHeap
 GetProcessId
 GetProcessTimes
@@ -67,6 +70,7 @@ SetConsoleMode
 SetFilePointerEx
 SetHandleInformation
 SetInformationJobObject
+SetThreadPriority
 Sleep
 SwitchToThread
 TerminateJobObject
