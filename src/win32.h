@@ -466,6 +466,12 @@ struct SYSTEM_INFO {
     unsigned short wProcessorRevision;
 };
 OKW_IMPORT void OKW_API GetSystemInfo(SYSTEM_INFO*);
+// The calling thread's claim on the processors (kal_task_set_priority), and the
+// physical cores beneath the processors this program may run on (kal_task_cores).
+OKW_IMPORT HANDLE OKW_API GetCurrentThread(void);
+OKW_IMPORT BOOL   OKW_API SetThreadPriority(HANDLE, int);
+OKW_IMPORT BOOL   OKW_API GetProcessAffinityMask(HANDLE, unsigned long long*, unsigned long long*);
+OKW_IMPORT BOOL   OKW_API GetLogicalProcessorInformationEx(int, void*, DWORD*);
 OKW_IMPORT BOOL   OKW_API VirtualProtect(LPVOID, unsigned long long, DWORD, DWORD*);
 OKW_IMPORT BOOL   OKW_API VirtualFree(LPVOID, unsigned long long, DWORD);
 OKW_IMPORT BOOL   OKW_API FlushInstructionCache(HANDLE, LPCVOID, unsigned long long);
