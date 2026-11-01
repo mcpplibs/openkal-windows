@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.19.0"
+openkal = "0.20.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.15.0"
+openkal-windows = "0.16.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -141,6 +141,42 @@ limits. That is what it is taken to mean here, and what the conformance suite
 observes is the part a caller depends on rather than the choice between the
 two: the region contains the stack of the thread that asked. It is measured on
 this system's own runner and again under Wine on a Linux one.
+
+## Version 0.16 (openkal 0.20)
+
+**Transfers at an offset go through a second handle.** A transfer given an offset
+on a handle opened for sequential transfer moves that handle's position here, and
+the specification says the position is neither used nor moved. Keeping a position
+of this implementation's own would part it from the system's, which the programs
+the file is given to share. So the file is opened a second time, relative to the
+first handle and with exactly its access, when the first transfer at an offset
+needs it; every transfer at an offset goes through that handle, whose position
+nothing observes, and it is closed with the file.
+
+**Regions** are this system's reservation calls, from which the interface's shape
+comes: `VirtualAlloc` reserves and commits, `VirtualFree` decommits and releases
+whole, `MEM_RESET` discards. Backing is charged apart from reservation, so
+`KAL_REGION_PROP_OVERCOMMIT` is not claimed. An alignment coarser than 64 KiB is
+reserved wide, released, and reserved again at the aligned address, repeated if
+another context took it meanwhile.
+
+**What a program and a unit use** is the commit charge, which is what a job
+counts and limits: `K32GetProcessMemoryInfo` for a program (kept by the process
+object after the program ends, while the handle is held) and the job's own
+`ActiveProcesses` and `JobMemory` for a unit.
+
+**A limit on a unit is the job's** (`KAL_PROCESS_PROP_JOB_LIMIT_HARD`):
+`JOB_OBJECT_LIMIT_JOB_MEMORY` refuses an allocation that would take the job over
+its limit. The specification states that the whole unit ends, and the job alone
+only refuses, so each limited job reports to one completion port and a context
+started with the first limit ends a job when it reports reaching its limit. A
+program that ended because an allocation was refused, before the rest of its job
+was ended, is told apart by the job's record of the violation; `kal_process_wait`
+reports both with `KAL_TERMINATED_LIMIT`.
+
+**A unit's termination is reported as one.** `kal_process_job_terminate` ends the
+job with the number `kal_process_terminate` uses, so its programs are reported as
+ended rather than as having returned 15, which they were until 0.16.
 
 ## Version 0.13
 

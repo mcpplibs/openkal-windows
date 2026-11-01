@@ -540,6 +540,45 @@ static_assert(sizeof(JOB_LIMITS) == 144, "JOBOBJECT_EXTENDED_LIMIT_INFORMATION")
 inline constexpr int  JobObjectExtendedLimitInformation_ = 9;
 inline constexpr DWORD JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE_ = 0x2000u;
 
+// ── openkal 0.20: what a program and a unit use, and a limit on a unit ──────
+//
+// A program's memory is its commit charge (PROCESS_MEMORY_COUNTERS_EX), which is
+// also what a job counts and limits; a unit's is the job's own count. The
+// ceiling is the job's, and the job reports reaching it on a completion port.
+struct PROCESS_MEMORY_COUNTERS_EX_ {
+    DWORD cb;
+    DWORD PageFaultCount;
+    unsigned long long PeakWorkingSetSize, WorkingSetSize;
+    unsigned long long QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage;
+    unsigned long long QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage;
+    unsigned long long PagefileUsage, PeakPagefileUsage, PrivateUsage;
+};
+static_assert(sizeof(PROCESS_MEMORY_COUNTERS_EX_) == 80, "PROCESS_MEMORY_COUNTERS_EX");
+struct JOB_ACCOUNTING_ {
+    long long TotalUserTime, TotalKernelTime, ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime;
+    DWORD TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses;
+};
+static_assert(sizeof(JOB_ACCOUNTING_) == 48, "JOBOBJECT_BASIC_ACCOUNTING_INFORMATION");
+struct JOB_VIOLATION_ {
+    DWORD LimitFlags, ViolationLimitFlags;
+    unsigned long long IoReadBytes, IoReadBytesLimit, IoWriteBytes, IoWriteBytesLimit;
+    long long PerJobUserTime, PerJobUserTimeLimit;
+    unsigned long long JobMemory, JobMemoryLimit;
+    int RateControlTolerance, RateControlToleranceLimit;
+};
+static_assert(sizeof(JOB_VIOLATION_) == 80, "JOBOBJECT_LIMIT_VIOLATION_INFORMATION");
+struct JOB_PORT_ { LPVOID CompletionKey; HANDLE CompletionPort; };
+inline constexpr int  JobObjectBasicAccountingInformation_ = 1;
+inline constexpr int  JobObjectAssociateCompletionPortInformation_ = 7;
+inline constexpr int  JobObjectLimitViolationInformation_ = 13;
+inline constexpr DWORD JOB_OBJECT_LIMIT_JOB_MEMORY_ = 0x200u;
+inline constexpr DWORD JOB_OBJECT_MSG_JOB_MEMORY_LIMIT_ = 10u;
+OKW_IMPORT BOOL   OKW_API QueryInformationJobObject(HANDLE, int, LPVOID, DWORD, DWORD*);
+OKW_IMPORT BOOL   OKW_API IsProcessInJob(HANDLE, HANDLE, BOOL*);
+OKW_IMPORT BOOL   OKW_API K32GetProcessMemoryInfo(HANDLE, PROCESS_MEMORY_COUNTERS_EX_*, DWORD);
+OKW_IMPORT HANDLE OKW_API CreateIoCompletionPort(HANDLE, HANDLE, unsigned long long, DWORD);
+OKW_IMPORT BOOL   OKW_API GetQueuedCompletionStatus(HANDLE, DWORD*, unsigned long long*, OVERLAPPED**, DWORD);
+
 // ── ntdll ───────────────────────────────────────────────────────────────────
 //
 // The object-manager entry points. Their STRUCTURES are declared in win.h and
