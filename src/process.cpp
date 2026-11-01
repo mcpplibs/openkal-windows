@@ -286,6 +286,22 @@ inline void* process_of(kal_process p) {
 // ends the job. A program of a limited job that ended because an allocation was
 // refused, before that context ended the rest, is told apart by the job's own
 // record of the violation.
+// WINE KEEPS NO MEMORY FOR A JOB AND HOLDS NO LIMIT ON ONE, and answers the
+// queries as though it did (a job's memory reads zero, a limit is accepted and
+// never reached). Measured under the wine of this repository's CI. Where the
+// environment is wine --- it exports `wine_get_version' from ntdll --- neither
+// position is claimed and both operations report kal_err_not_supported, so
+// that what is claimed is what the environment does.
+bool keeps_job_memory() {
+    static int answer = -1;   // -1 not asked
+    if (answer < 0) {
+        static const wchar_t ntdll[] = L"ntdll.dll";
+        HANDLE n = LoadLibraryW(ntdll);
+        answer = (n && GetProcAddress(n, "wine_get_version")) ? 0 : 1;
+    }
+    return answer == 1;
+}
+
 struct limited { HANDLE job; int ended; };
 // The number a job ended for its limit gives its programs: one with the
 // customer bit set, which no status of this system's own has.
@@ -657,8 +673,11 @@ int kal_process_info(kal_process p, kal_u32 wanted, kal_program_info* out) {
     // object keeps both after the program ends, while the handle is held.
     PROCESS_MEMORY_COUNTERS_EX_ m{};
     m.cb = sizeof m;
+    // An ended program whose counters read zero has no record of them left
+    // (wine keeps none), which is not a peak of zero: nothing is reported.
     if ((wanted & KAL_PINFO_MEMORY) && self >= sizeof v
-        && K32GetProcessMemoryInfo(kind_of(p) == kind_self ? GetCurrentProcess() : h, &m, sizeof m)) {
+        && K32GetProcessMemoryInfo(kind_of(p) == kind_self ? GetCurrentProcess() : h, &m, sizeof m)
+        && (!v.ended || m.PeakPagefileUsage != 0)) {
         v.memory_bytes = v.ended ? 0 : m.PagefileUsage;
         v.memory_peak_bytes = m.PeakPagefileUsage > m.PagefileUsage ? m.PeakPagefileUsage : m.PagefileUsage;
         v.present |= KAL_PINFO_MEMORY;
@@ -772,6 +791,7 @@ void kal_process_job_close(kal_job j) {
 
 // WHAT A UNIT USES (openkal 0.20): the job's own counts.
 int kal_process_job_usage(kal_job j, kal_job_usage* out) {
+    if (!keeps_job_memory()) return kal_err_not_supported;
     if (out == nullptr || out->self_size < 8) return kal_err_invalid;
     HANDLE h = okw::unpack(j.h);
     if (!h) return kal_err_invalid;
@@ -796,6 +816,7 @@ int kal_process_job_usage(kal_job j, kal_job_usage* out) {
 // the context that waits on the job's reports.
 int kal_process_job_limit(kal_job j, kal_uintptr kind, kal_u64 value) {
     if (kind != KAL_JOB_LIMIT_MEMORY) return kal_err_invalid;
+    if (!keeps_job_memory()) return kal_err_not_supported;
     HANDLE h = okw::unpack(j.h);
     if (!h) return kal_err_invalid;
     JOB_LIMITS limits{};
@@ -970,7 +991,7 @@ kal_uintptr kal_process_props(void) { return
   | KAL_PROCESS_PROP_EXIT_STATUS
   | KAL_PROCESS_PROP_CHANNEL
   | KAL_PROCESS_PROP_JOB
-  | KAL_PROCESS_PROP_JOB_USAGE | KAL_PROCESS_PROP_JOB_LIMIT_HARD   // 0.16: the job's counts and ceiling
+  | (keeps_job_memory() ? KAL_PROCESS_PROP_JOB_USAGE | KAL_PROCESS_PROP_JOB_LIMIT_HARD : 0u)   // 0.16
   | KAL_PROCESS_PROP_BOUND_LIFETIME    // K5: a job that ends with this program
   | KAL_PROCESS_PROP_STOP_REQUESTED    // K3: the routine handles, and the word is read
   | KAL_PROCESS_PROP_OPEN_ID
