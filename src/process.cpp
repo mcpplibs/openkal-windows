@@ -268,6 +268,69 @@ inline void* process_of(kal_process p) {
 }
 
 
+// --- what a program and a unit use, and a limit on a unit (openkal 0.20) ----
+//
+// A PROGRAM'S MEMORY is its commit charge (`K32GetProcessMemoryInfo':
+// `PagefileUsage' now, `PeakPagefileUsage' at most), which is what a job counts
+// and limits. A process object keeps its counters after the program ends, for as
+// long as a handle to it is held.
+//
+// A UNIT IS A JOB OBJECT, which counts its own members (`ActiveProcesses') and
+// its own commit (`JobMemory').
+//
+// A LIMIT IS HELD BY THE JOB (HARD): JOB_OBJECT_LIMIT_JOB_MEMORY refuses an
+// allocation that would take the job over its limit. What the specification
+// states is that the WHOLE unit ends, and the job alone would only refuse: so
+// each limited job reports to one completion port, a context started with the
+// first limit waits on it, and on the job's report that it reached its limit it
+// ends the job. A program of a limited job that ended because an allocation was
+// refused, before that context ended the rest, is told apart by the job's own
+// record of the violation.
+struct limited { HANDLE job; int ended; };
+// The number a job ended for its limit gives its programs: one with the
+// customer bit set, which no status of this system's own has.
+constexpr UINT kLimitCode = 0xE0DA1001u;
+constexpr int kLimited = 64;
+limited g_limited[kLimited];
+SRWLOCK_ g_limited_lock{};
+HANDLE g_port = nullptr;
+int g_watching = 0;
+
+DWORD OKW_API watch(LPVOID) {
+    for (;;) {
+        DWORD message = 0; unsigned long long key = 0; OVERLAPPED* detail = nullptr;
+        if (!GetQueuedCompletionStatus(g_port, &message, &key, &detail, INFINITE)) continue;
+        if (message != JOB_OBJECT_MSG_JOB_MEMORY_LIMIT_) continue;
+        AcquireSRWLockExclusive(&g_limited_lock);
+        for (auto& r : g_limited)
+            if (r.job && reinterpret_cast<unsigned long long>(r.job) == key) {
+                r.ended = 1;
+                TerminateJobObject(r.job, kLimitCode);
+            }
+        ReleaseSRWLockExclusive(&g_limited_lock);
+    }
+}
+
+// Whether `process' ended because a limited job it belongs to reached its limit.
+bool ended_by_limit(HANDLE process) {
+    bool limit = false;
+    AcquireSRWLockExclusive(&g_limited_lock);
+    for (const auto& r : g_limited) {
+        if (!r.job) continue;
+        BOOL in = FALSE;
+        if (!IsProcessInJob(process, r.job, &in) || !in) continue;
+        JOB_VIOLATION_ v{};
+        if (r.ended || (QueryInformationJobObject(r.job, JobObjectLimitViolationInformation_, &v, sizeof v, nullptr)
+                        && (v.ViolationLimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY_)))
+            limit = true;
+    }
+    ReleaseSRWLockExclusive(&g_limited_lock);
+    return limit;
+}
+
+}  // namespace
+
+namespace {
 }  // namespace
 
 namespace okw {
@@ -590,6 +653,16 @@ int kal_process_info(kal_process p, kal_u32 wanted, kal_program_info* out) {
         if (wanted & KAL_PINFO_STARTED) { v.started_ns = ticks(created) * 100ull; v.present |= KAL_PINFO_STARTED; }
         if (wanted & KAL_PINFO_CPU) { v.cpu_ns = (ticks(kernel) + ticks(user)) * 100ull; v.present |= KAL_PINFO_CPU; }
     }
+    // MEMORY (openkal 0.20): the commit charge now and at most; the process
+    // object keeps both after the program ends, while the handle is held.
+    PROCESS_MEMORY_COUNTERS_EX_ m{};
+    m.cb = sizeof m;
+    if ((wanted & KAL_PINFO_MEMORY) && self >= sizeof v
+        && K32GetProcessMemoryInfo(kind_of(p) == kind_self ? GetCurrentProcess() : h, &m, sizeof m)) {
+        v.memory_bytes = v.ended ? 0 : m.PagefileUsage;
+        v.memory_peak_bytes = m.PeakPagefileUsage > m.PagefileUsage ? m.PeakPagefileUsage : m.PagefileUsage;
+        v.present |= KAL_PINFO_MEMORY;
+    }
     const kal_u32 n = self < sizeof v ? self : static_cast<kal_u32>(sizeof v);
     auto* d = reinterpret_cast<unsigned char*>(out);
     const auto* s = reinterpret_cast<const unsigned char*>(&v);
@@ -679,7 +752,10 @@ int kal_process_job_enter(kal_job* j) {
 int kal_process_job_terminate(kal_job j) {
     HANDLE h = okw::unpack(j.h);
     if (!h) return kal_err_invalid;
-    if (!TerminateJobObject(h, 15)) return okw::translate_win32(GetLastError());
+    // The number a terminating call supplies here (`kal_process_terminate'
+    // uses it too), so that `kal_process_wait' reports the members as ended
+    // rather than as having returned 15 (0.16).
+    if (!TerminateJobObject(h, 0xFFFFFFFFu)) return okw::translate_win32(GetLastError());
     return kal_ok;
 }
 
@@ -687,7 +763,83 @@ int kal_process_job_terminate(kal_job j) {
 // the last close is deliberately not set --- see the note above kal_process_spawn.
 void kal_process_job_close(kal_job j) {
     HANDLE h = okw::unpack(j.h);
-    if (h) { okw::retire(j.h); CloseHandle(h); }
+    if (!h) return;
+    AcquireSRWLockExclusive(&g_limited_lock);
+    for (auto& r : g_limited) if (r.job == h) r = limited{};
+    ReleaseSRWLockExclusive(&g_limited_lock);
+    okw::retire(j.h); CloseHandle(h);
+}
+
+// WHAT A UNIT USES (openkal 0.20): the job's own counts.
+int kal_process_job_usage(kal_job j, kal_job_usage* out) {
+    if (out == nullptr || out->self_size < 8) return kal_err_invalid;
+    HANDLE h = okw::unpack(j.h);
+    if (!h) return kal_err_invalid;
+    JOB_ACCOUNTING_ a{};
+    JOB_VIOLATION_ v{};
+    if (!QueryInformationJobObject(h, JobObjectBasicAccountingInformation_, &a, sizeof a, nullptr))
+        return okw::translate_win32(GetLastError());
+    if (a.ActiveProcesses == 0) return kal_err_invalid;
+    kal_job_usage u{};
+    u.self_size = out->self_size;
+    u.members = a.ActiveProcesses;
+    if (QueryInformationJobObject(h, JobObjectLimitViolationInformation_, &v, sizeof v, nullptr))
+        u.memory_bytes = v.JobMemory;
+    const kal_u32 n = out->self_size < sizeof u ? out->self_size : static_cast<kal_u32>(sizeof u);
+    auto* d = reinterpret_cast<unsigned char*>(out);
+    const auto* s = reinterpret_cast<const unsigned char*>(&u);
+    for (kal_u32 i = 0; i < n; ++i) d[i] = s[i];
+    return kal_ok;
+}
+
+// A LIMIT ON A UNIT (openkal 0.20), held by the job and its end made whole by
+// the context that waits on the job's reports.
+int kal_process_job_limit(kal_job j, kal_uintptr kind, kal_u64 value) {
+    if (kind != KAL_JOB_LIMIT_MEMORY) return kal_err_invalid;
+    HANDLE h = okw::unpack(j.h);
+    if (!h) return kal_err_invalid;
+    JOB_LIMITS limits{};
+    if (!QueryInformationJobObject(h, JobObjectExtendedLimitInformation_, &limits, sizeof limits, nullptr))
+        return okw::translate_win32(GetLastError());
+    if (value == 0) limits.LimitFlags &= ~JOB_OBJECT_LIMIT_JOB_MEMORY_;
+    else { limits.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY_; limits.JobMemoryLimit = value; }
+
+    AcquireSRWLockExclusive(&g_limited_lock);
+    limited* row = nullptr;
+    for (auto& r : g_limited) if (r.job == h) row = &r;
+    const bool fresh = row == nullptr;
+    if (!row) for (auto& r : g_limited) if (!r.job) { row = &r; break; }
+    if (!row && value != 0) { ReleaseSRWLockExclusive(&g_limited_lock); return kal_err_no_memory; }
+    if (fresh && value != 0) {
+        if (!g_port) g_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
+        JOB_PORT_ port{ h, g_port };
+        if (!g_port || !SetInformationJobObject(h, JobObjectAssociateCompletionPortInformation_, &port, sizeof port)) {
+            const DWORD why = GetLastError();
+            ReleaseSRWLockExclusive(&g_limited_lock);
+            return okw::translate_win32(why);
+        }
+        *row = limited{ h, 0 };
+    }
+    ReleaseSRWLockExclusive(&g_limited_lock);
+    if (!SetInformationJobObject(h, JobObjectExtendedLimitInformation_, &limits, sizeof limits))
+        return okw::translate_win32(GetLastError());
+    if (value != 0) {
+        AcquireSRWLockExclusive(&g_limited_lock);
+        const bool start = g_watching == 0;
+        g_watching = 1;
+        ReleaseSRWLockExclusive(&g_limited_lock);
+        if (start) {
+            HANDLE t = CreateThread(nullptr, 64 * 1024, &watch, nullptr, 0, nullptr);
+            if (!t) {
+                AcquireSRWLockExclusive(&g_limited_lock);
+                g_watching = 0;
+                ReleaseSRWLockExclusive(&g_limited_lock);
+                return okw::translate_win32(GetLastError());
+            }
+            CloseHandle(t);
+        }
+    }
+    return kal_ok;
 }
 
 // A channel: a pair of streams of which one end is meant to cross a spawn.
@@ -755,7 +907,12 @@ int kal_process_wait(kal_process p, int* status, int* terminated) {
     // what the interface requires and all that it requires.
     // A program ended by a console interrupt, or ending as one asked it to
     // (kal_process_end_as_requested), is reported as ended by its environment.
-    if (code == 0xC0000409u || code == 0xFFFFFFFFu || code == STATUS_CONTROL_C_EXIT_) {
+    // A program of a limited job that ended for the job's limit --- ended with
+    // the job, or by a refused allocation first --- is reported as limited.
+    if (code == kLimitCode || ended_by_limit(h)) {
+        if (status)     *status = static_cast<int>(code & 0x7fffffff);
+        if (terminated) *terminated = KAL_TERMINATED_LIMIT;
+    } else if (code == 0xC0000409u || code == 0xFFFFFFFFu || code == STATUS_CONTROL_C_EXIT_) {
         if (status)     *status = static_cast<int>(code & 0x7fffffff);
         if (terminated) *terminated = 1;
     } else {
@@ -813,6 +970,7 @@ kal_uintptr kal_process_props(void) { return
   | KAL_PROCESS_PROP_EXIT_STATUS
   | KAL_PROCESS_PROP_CHANNEL
   | KAL_PROCESS_PROP_JOB
+  | KAL_PROCESS_PROP_JOB_USAGE | KAL_PROCESS_PROP_JOB_LIMIT_HARD   // 0.16: the job's counts and ceiling
   | KAL_PROCESS_PROP_BOUND_LIFETIME    // K5: a job that ends with this program
   | KAL_PROCESS_PROP_STOP_REQUESTED    // K3: the routine handles, and the word is read
   | KAL_PROCESS_PROP_OPEN_ID

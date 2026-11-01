@@ -167,6 +167,16 @@ preopen* table(kal_uintptr* count) {
 void* dir_handle(kal_dir d) { return okw::unpack(d.h); }
 void* file_handle(kal_file f) { return okw::unpack(f.h); }
 
+// The second handle of a file, for transfers at an offset (openkal 0.20, see
+// kal_fs_read_at).
+void* volatile* positional_handles() {
+    static void* volatile slots[okw::kSlots];
+    return slots;
+}
+// Held to install a second handle in its slot or to take it out; a transfer
+// reads the slot without it (one aligned word).
+SRWLOCK_ g_positional_lock{};
+
 // One opening operation, since the object manager has one.
 long open_relative(void* root, const char* name, kal_uintptr len,
                    unsigned long access, unsigned long disposition,
@@ -492,7 +502,15 @@ void kal_fs_close_dir(kal_dir d) {
 
 void kal_fs_close_file(kal_file f) {
     void* h = file_handle(f);
-    if (h) { okw::retire(f.h); okw::NtClose(h); }
+    if (!h) return;
+    if (okw::within_bound(h)) {
+        AcquireSRWLockExclusive(&g_positional_lock);
+        void* second = positional_handles()[okw::slot_of(h)];
+        positional_handles()[okw::slot_of(h)] = nullptr;
+        ReleaseSRWLockExclusive(&g_positional_lock);
+        if (second) okw::NtClose(second);
+    }
+    okw::retire(f.h); okw::NtClose(h);
 }
 
 // A file's stream is the file. The environment's handle is what openkal.stream
@@ -518,6 +536,103 @@ int kal_fs_seek(kal_file f, kal_i64 offset, int whence, kal_u64* result) {
         return okw::translate_win32(GetLastError());
     if (result) *result = static_cast<kal_u64>(arrived.QuadPart);
     return kal_ok;
+}
+
+// TRANSFERS AT AN OFFSET (openkal 0.20), THROUGH A SECOND HANDLE.
+//
+// A transfer given an offset on a handle opened for sequential transfer --- which
+// every file here is --- moves that handle's position to the end of the
+// transfer, and the specification says the position is neither used nor moved.
+// Keeping a position of this implementation's own instead would part it from
+// the environment's, which the programs this one gives the file to share: a
+// file given to a started program as its output is written there at the
+// environment's position. So the file is opened a second time, relative to the
+// first handle and with exactly its access (FileAccessInformation), when the
+// first transfer at an offset needs it, and every transfer at an offset goes
+// through that handle, whose position nothing observes. It is kept beside the
+// first in a slot indexed as the generations are (src/handle.h), installed by
+// one exchange, and closed with the file. A handle beyond the bound the slots
+// cover is given a second handle for the one transfer.
+namespace {
+void* open_second(void* h) {
+    okw::io_status_block s{};
+    unsigned long access = 0;
+    const long q = okw::NtQueryInformationFile(h, &s, &access, sizeof access,
+                                               okw::file_access_information_class);
+    if (!okw::ok(q)) return nullptr;
+    void* second = nullptr;
+    const long r = open_relative(h, "", 0, access & ~static_cast<unsigned long>(SYNCHRONIZE),
+                                 okw::file_open, okw::file_non_directory_file, &second);
+    return okw::ok(r) ? second : nullptr;
+}
+
+struct positional {
+    void* h = nullptr;
+    bool  borrowed = false;     // a slot's, released with the file
+    ~positional() { if (h && !borrowed) okw::NtClose(h); }
+};
+
+void positional_for(void* h, positional& p) {
+    if (!okw::within_bound(h)) { p.h = open_second(h); return; }
+    void* volatile* slot = &positional_handles()[okw::slot_of(h)];
+    void* have = *slot;
+    if (!have) {
+        void* made = open_second(h);
+        if (!made) return;
+        AcquireSRWLockExclusive(&g_positional_lock);
+        have = *slot;
+        if (!have) { *slot = made; have = made; made = nullptr; }
+        ReleaseSRWLockExclusive(&g_positional_lock);
+        if (made) okw::NtClose(made);
+    }
+    p.h = have; p.borrowed = true;
+}
+}  // namespace
+
+kal_intptr kal_fs_read_at(kal_file f, void* buf, kal_uintptr len, kal_u64 offset) {
+    void* h = file_handle(f);
+    if (!h) return -kal_err_invalid;
+    positional p;
+    positional_for(h, p);
+    if (!p.h) return -kal_err_io;
+    OVERLAPPED ov{};
+    ov.u.Offset = static_cast<DWORD>(offset);
+    ov.u.OffsetHigh = static_cast<DWORD>(offset >> 32);
+    const DWORD want = len > 0x7fffffffu ? 0x7fffffffu : static_cast<DWORD>(len);
+    DWORD got = 0;
+    if (!ReadFile(p.h, buf, want, &got, &ov)) {
+        const DWORD err = GetLastError();
+        if (err == ERROR_HANDLE_EOF) return 0;
+        return -okw::translate_win32(err);
+    }
+    return static_cast<kal_intptr>(got);
+}
+
+kal_intptr kal_fs_write_at(kal_file f, const void* buf, kal_uintptr len, kal_u64 offset) {
+    void* h = file_handle(f);
+    if (!h) return -kal_err_invalid;
+    positional p;
+    positional_for(h, p);
+    if (!p.h) return -kal_err_io;
+    const auto* b = static_cast<const unsigned char*>(buf);
+    kal_uintptr done = 0;
+    while (done < len) {
+        const kal_u64 at = offset + done;
+        OVERLAPPED ov{};
+        ov.u.Offset = static_cast<DWORD>(at);
+        ov.u.OffsetHigh = static_cast<DWORD>(at >> 32);
+        const kal_uintptr want = len - done;
+        const DWORD chunk = want > 0x7fffffffu ? 0x7fffffffu : static_cast<DWORD>(want);
+        DWORD wrote = 0;
+        if (!WriteFile(p.h, b + done, chunk, &wrote, &ov)) {
+            const DWORD err = GetLastError();
+            if (done != 0) return static_cast<kal_intptr>(done);
+            return -okw::translate_win32(err);
+        }
+        if (wrote == 0) break;
+        done += wrote;
+    }
+    return static_cast<kal_intptr>(done);
 }
 
 int kal_fs_truncate(kal_file f, kal_u64 size) {

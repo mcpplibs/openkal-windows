@@ -155,6 +155,7 @@ enum : int {
     file_basic_information_class     = 4,
     file_standard_information_class  = 5,
     file_position_information_class  = 14,
+    file_access_information_class    = 8,
     file_disposition_information_class = 13,
     file_disposition_information_ex_class = 64,
     file_end_of_file_information_class = 20,
