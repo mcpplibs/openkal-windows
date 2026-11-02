@@ -210,7 +210,8 @@ jobs:
           headers = sorted(glob.glob("src/*.h"))
           for h in headers:
               text = open(h, encoding="utf-8").read()
-              declared |= set(re.findall(r'OKW_IMPORT\s+\w+\s+OKW_API\s+(\w+)\s*\(', text))
+              # A return type of several words (`unsigned long long') too.
+              declared |= set(re.findall(r'OKW_IMPORT\s+[\w\s\*]+?\s+OKW_API\s+(\w+)\s*\(', text))
               declared |= set(re.findall(
                   r'__declspec\(dllimport\)[\w\s\*]*?(\w+)\s*\(', text))
           exported = set()

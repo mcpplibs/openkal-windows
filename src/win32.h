@@ -638,6 +638,11 @@ struct EXCEPTION_RECORD_ {
 struct EXCEPTION_POINTERS_ { EXCEPTION_RECORD_* ExceptionRecord; void* ContextRecord; };
 using TOP_LEVEL_FILTER_ = long (OKW_API*)(EXCEPTION_POINTERS_*);
 OKW_IMPORT TOP_LEVEL_FILTER_ OKW_API SetUnhandledExceptionFilter(TOP_LEVEL_FILTER_);
+// TOUCHES: a first look at the one exception that is a touch being recorded ---
+// an execution of a page made not executable for it --- which is resolved and
+// the program continues; every other exception passes on.
+OKW_IMPORT LPVOID OKW_API AddVectoredExceptionHandler(ULONG, TOP_LEVEL_FILTER_);
+OKW_IMPORT ULONG  OKW_API RemoveVectoredExceptionHandler(LPVOID);
 
 // SAMPLES: a context of this program's own that suspends each of the others
 // and reads where it stands.

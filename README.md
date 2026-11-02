@@ -190,6 +190,8 @@ calls before it ends the program, with each frame's file, offset and symbol: the
 file a part of a region maps (an ELF image) or the module (a PE image, from its
 COFF symbol table). Samples are taken by a context of the program's own that
 suspends each other context that used the processor since the last tick.
+Touches are a part's execution taken away and given back, page by page, by a
+first look at the access violations of the kind that executes.
 `kal_process_info` reports page faults as one count, `faults_minor`.
 `kal_process_wait` reports a program this system ended for a fault as
 terminated. A preference for economy lowers the started program's memory

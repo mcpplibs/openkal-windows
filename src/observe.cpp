@@ -17,6 +17,7 @@
 // may hold the lock an allocation takes.
 #include "win.h"
 #include <openkal/debug.h>
+#include <openkal/exec.h>
 #include <openkal/prof.h>
 #include <openkal/task.h>
 #include <openkal/time.h>
@@ -373,6 +374,98 @@ long OKW_API ending(EXCEPTION_POINTERS_* e) {
 OKW_START_FN(install_fault_report) { g_before = SetUnhandledExceptionFilter(&ending); }
 OKW_AT_START(install_fault_report);
 
+// --- touches (0.23) ------------------------------------------------------------------
+//
+// A part being recorded keeps its access and loses its execution; this
+// system then reports a first execution of a page as an access violation of
+// the kind that executes (the first parameter 8), which a first look resolves
+// --- the page executable again, its address recorded once --- and the
+// instruction is carried out. Every other exception passes on to the
+// program's handlers.
+struct touched_part {
+    okw_uptr from = 0, to = 0;
+    DWORD prot = 0;
+    volatile long long* seen = nullptr;     // a bit for each page
+};
+constexpr int kTouchedParts = 16;
+touched_part g_parts[kTouchedParts];
+volatile long long g_part_count = 0;
+volatile long long g_touching = 0;
+okw_uptr g_touch_page = 4096;
+void* g_touch_handler = nullptr;
+
+struct touch_ring {
+    okw_uptr* pages = nullptr;
+    volatile long long* ready = nullptr;
+    okw_uptr cap = 0;
+    volatile long long written = 0, taken = 0;
+};
+touch_ring g_touches;
+
+DWORD without_execution(DWORD prot) {
+    switch (prot) {
+        case 0x10: return PAGE_NOACCESS;           // PAGE_EXECUTE
+        case 0x20: return PAGE_READONLY;           // PAGE_EXECUTE_READ
+        case 0x40: return PAGE_READWRITE;          // PAGE_EXECUTE_READWRITE
+        case 0x80: return PAGE_WRITECOPY;          // PAGE_EXECUTE_WRITECOPY
+        default:   return 0;
+    }
+}
+
+// One protection for the whole of [from, to), and that one executable; 0 otherwise.
+DWORD protection_of(okw_uptr from, okw_uptr to) {
+    DWORD prot = 0;
+    for (okw_uptr at = from; at < to;) {
+        MEMORY_BASIC_INFORMATION_ m{};
+        if (VirtualQuery(reinterpret_cast<void*>(at), &m, sizeof m) == 0 || m.State != MEM_COMMIT) return 0;
+        if (prot == 0) prot = m.Protect; else if (prot != m.Protect) return 0;
+        at = reinterpret_cast<okw_uptr>(m.BaseAddress) + m.RegionSize;
+    }
+    return without_execution(prot) ? prot : 0;
+}
+
+// The protection of [from, to) set, each run of it within one allocation in
+// turn: a call of this system's own reaches no further than one view.
+void protect_runs(okw_uptr from, okw_uptr to, DWORD prot) {
+    for (okw_uptr at = from; at < to;) {
+        MEMORY_BASIC_INFORMATION_ m{};
+        if (VirtualQuery(reinterpret_cast<void*>(at), &m, sizeof m) == 0) return;
+        okw_uptr end = reinterpret_cast<okw_uptr>(m.BaseAddress) + m.RegionSize;
+        if (end > to) end = to;
+        DWORD before = 0;
+        VirtualProtect(reinterpret_cast<void*>(at), end - at, prot, &before);
+        at = end;
+    }
+}
+
+long OKW_API touch_look(EXCEPTION_POINTERS_* e) {
+    const EXCEPTION_RECORD_* r = e->ExceptionRecord;
+    if (r->ExceptionCode != 0xC0000005u || r->NumberParameters < 2 || r->ExceptionInformation[0] != 8
+        || !okw::atomic::load(&g_touching))
+        return 0;   // EXCEPTION_CONTINUE_SEARCH
+    const okw_uptr addr = static_cast<okw_uptr>(r->ExceptionInformation[1]);
+    const long long n = okw::atomic::load(&g_part_count);
+    for (long long k = 0; k < n; ++k) {
+        touched_part& t = g_parts[k];
+        if (addr < t.from || addr >= t.to) continue;
+        const okw_uptr page = addr & ~(g_touch_page - 1);
+        const okw_uptr index = (page - t.from) / g_touch_page;
+        const long long bit = 1ll << (index & 63);
+        const long long was = okw::atomic::fetch_or(&t.seen[index >> 6], bit);
+        DWORD before = 0;
+        VirtualProtect(reinterpret_cast<void*>(page), g_touch_page, t.prot, &before);
+        if (!(was & bit) && g_touches.pages) {
+            const long long mine = okw::atomic::fetch_add(&g_touches.written, 1);
+            if (static_cast<okw_uptr>(mine - okw::atomic::load(&g_touches.taken)) < g_touches.cap) {
+                g_touches.pages[static_cast<okw_uptr>(mine) % g_touches.cap] = page;
+                okw::atomic::store(&g_touches.ready[static_cast<okw_uptr>(mine) % g_touches.cap], mine + 1);
+            }
+        }
+        return -1;   // EXCEPTION_CONTINUE_EXECUTION
+    }
+    return 0;
+}
+
 // --- samples -----------------------------------------------------------------------
 constexpr okw_uptr kRing = 65536;
 constexpr okw_uptr kCommitChunk = 64;          // samples committed at a time
@@ -511,7 +604,7 @@ int  kal_prof_active(void) { return 0; }
 int  kal_prof_counter(const char*, kal_uintptr, const volatile kal_u64*) { return kal_ok; }
 void kal_prof_mark(const char*, kal_uintptr, int) {}
 
-kal_uintptr kal_prof_props(void) { return KAL_PROF_PROP_SAMPLES; }
+kal_uintptr kal_prof_props(void) { return KAL_PROF_PROP_SAMPLES | KAL_PROF_PROP_TOUCHES; }
 
 int kal_prof_sample_begin(kal_u32 per_second) {
     if (per_second == 0 || per_second > 10000) return kal_err_invalid;
@@ -554,6 +647,61 @@ int kal_prof_sample_end(void) {
         g_ring.thread = nullptr;
     }
     okw::atomic::store(&g_ring.on, 0);
+    return kal_ok;
+}
+
+// TOUCHES (0.23).
+int kal_prof_touch_begin(const void* at, kal_uintptr size) {
+    const okw_uptr g = kal_exec_granularity();
+    const okw_uptr from = reinterpret_cast<okw_uptr>(at);
+    if (size == 0 || (from & (g - 1)) != 0 || (size & (g - 1)) != 0) return kal_err_invalid;
+    const DWORD prot = protection_of(from, from + size);
+    if (prot == 0) return kal_err_invalid;
+    const long long k = okw::atomic::load(&g_part_count);
+    if (k == kTouchedParts) return kal_err_no_memory;
+    g_touch_page = g;
+    if (!g_touches.pages) {
+        constexpr okw_uptr cap = 65536;
+        auto* m = static_cast<unsigned char*>(VirtualAlloc(nullptr, cap * (sizeof(okw_uptr) + sizeof(long long)),
+                                                           MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        if (!m) return kal_err_no_memory;
+        g_touches.pages = reinterpret_cast<okw_uptr*>(m);
+        g_touches.ready = reinterpret_cast<volatile long long*>(m + cap * sizeof(okw_uptr));
+        g_touches.cap = cap;
+    }
+    const okw_uptr words = (size / g + 63) / 64;
+    auto* seen = static_cast<volatile long long*>(VirtualAlloc(nullptr, words * sizeof(long long),
+                                                               MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (!seen) return kal_err_no_memory;
+    if (!g_touch_handler) g_touch_handler = AddVectoredExceptionHandler(1, &touch_look);
+    if (!g_touch_handler) return kal_err_no_memory;
+    g_parts[k] = touched_part{ from, from + size, prot, seen };
+    okw::atomic::store(&g_part_count, k + 1);
+    okw::atomic::store(&g_touching, 1);
+    protect_runs(from, from + size, without_execution(prot));
+    return kal_ok;
+}
+
+kal_intptr kal_prof_touch_take(kal_uintptr* out, kal_uintptr count) {
+    if (out == nullptr && count != 0) return -static_cast<kal_intptr>(kal_err_invalid);
+    if (!g_touches.pages) return 0;
+    kal_uintptr n = 0;
+    while (n < count) {
+        const long long t = okw::atomic::load(&g_touches.taken);
+        if (okw::atomic::load(&g_touches.ready[static_cast<okw_uptr>(t) % g_touches.cap]) != t + 1) break;
+        out[n++] = g_touches.pages[static_cast<okw_uptr>(t) % g_touches.cap];
+        okw::atomic::store(&g_touches.taken, t + 1);
+    }
+    return static_cast<kal_intptr>(n);
+}
+
+// Every part as it was; the pages' bits stay for the life of the program.
+int kal_prof_touch_end(void) {
+    const long long n = okw::atomic::load(&g_part_count);
+    if (n == 0) return kal_err_invalid;
+    for (long long k = 0; k < n; ++k) protect_runs(g_parts[k].from, g_parts[k].to, g_parts[k].prot);
+    okw::atomic::store(&g_touching, 0);
+    okw::atomic::store(&g_part_count, 0);
     return kal_ok;
 }
 

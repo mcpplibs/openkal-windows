@@ -84,6 +84,7 @@ inline long long exchange(volatile long long* p, long long v) { return _Interloc
 inline long long fetch_add(volatile long long* p, long long v) { return _InterlockedExchangeAdd64(p, v); }
 inline long long load(volatile long long* p) { return _InterlockedOr64(p, 0); }
 inline void store(volatile long long* p, long long v) { (void)_InterlockedExchange64(p, v); }
+inline long long fetch_or(volatile long long* p, long long v) { return _InterlockedOr64(p, v); }
 }  // namespace okw::atomic
 #else
 namespace okw::atomic {
@@ -91,6 +92,7 @@ inline long long exchange(volatile long long* p, long long v) { return __atomic_
 inline long long fetch_add(volatile long long* p, long long v) { return __atomic_fetch_add(p, v, __ATOMIC_ACQ_REL); }
 inline long long load(volatile long long* p) { return __atomic_load_n(p, __ATOMIC_ACQUIRE); }
 inline void store(volatile long long* p, long long v) { __atomic_store_n(p, v, __ATOMIC_RELEASE); }
+inline long long fetch_or(volatile long long* p, long long v) { return __atomic_fetch_or(p, v, __ATOMIC_ACQ_REL); }
 }  // namespace okw::atomic
 #endif
 
