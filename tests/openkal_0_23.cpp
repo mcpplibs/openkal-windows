@@ -9,7 +9,8 @@
 // OF A REGION THAT IS A FILE'S leaves the rest of the region as it was, and a
 // part this system cannot place a view at is refused with the region
 // unchanged. A PREFERENCE FOR ECONOMY lowers the started program's memory
-// priority. A FAULT is reported by what ends the program, naming the program's
+// priority, and one for performance leaves it the system's --- the starter's,
+// which a started program has. A FAULT is reported by what ends the program, naming the program's
 // own file.
 #include <cstdio>
 #include <cstring>
@@ -96,6 +97,16 @@ bool holds(const char* buf, long got, const char* entry) {
 
 [[gnu::noinline]] void fault_here() { *static_cast<volatile int*>(nullptr) = 1; }
 
+// This program's memory priority (0 to 5; MEMORY_PRIORITY_LOW is 2), or -1
+// where the system does not report it.
+int memory_priority() {
+    using get_t = BOOL (OKW_API*)(HANDLE, int, LPVOID, DWORD);
+    const auto get = reinterpret_cast<get_t>(okw::system_function(L"kernel32.dll", "GetProcessInformation"));
+    unsigned long priority = 0;
+    if (!get || !get(GetCurrentProcess(), 0 /* ProcessMemoryPriority */, &priority, sizeof priority)) return -1;
+    return static_cast<int>(priority);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -132,11 +143,8 @@ int main(int argc, char** argv) {
     if (std::strcmp(errand, "--defaults") == 0)
         return kal_fs_preopen_count() > 2 && by_name("/granted").h == 0 ? 0 : 46;
     if (std::strcmp(errand, "--priority") == 0) {
-        using get_t = BOOL (OKW_API*)(HANDLE, int, LPVOID, DWORD);
-        const auto get = reinterpret_cast<get_t>(okw::system_function(L"kernel32.dll", "GetProcessInformation"));
-        unsigned long priority = 0;
-        if (!get || !get(GetCurrentProcess(), 0 /* ProcessMemoryPriority */, &priority, sizeof priority)) return 72;
-        return priority == 2 ? 70 : 71;
+        const int p = memory_priority();
+        return p < 0 ? 69 : 70 + p;
     }
     if (std::strcmp(errand, "--fault") == 0) { fault_here(); return 0; }
 
@@ -230,12 +238,13 @@ int main(int argc, char** argv) {
 
     // ECONOMY.
     {
+        const int mine = memory_priority();
         const int low = start(volume, "--priority", nullptr, 0, KAL_SPAWN_RESOURCES_ECONOMY, nullptr, true);
-        if (low == 72) std::printf("  this system does not report a program's memory priority\n");
+        if (low == 69 || mine < 0) std::printf("  this system does not report a program's memory priority\n");
         else {
-            check(low == 70, "a program started for economy has a low memory priority");
-            check(start(volume, "--priority", nullptr, 0, KAL_SPAWN_RESOURCES_PERFORMANCE, nullptr, true) == 71,
-                  "and one started for performance has the system's");
+            check(low == 72, "a program started for economy has a low memory priority");
+            check(start(volume, "--priority", nullptr, 0, KAL_SPAWN_RESOURCES_PERFORMANCE, nullptr, true) == 70 + mine,
+                  "and one started for performance has the system's, its starter's");
         }
     }
 
