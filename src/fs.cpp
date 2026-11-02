@@ -1104,6 +1104,9 @@ kal_uintptr kal_fs_props(kal_dir d) {
     // offers the local family.
     if ((a.info.attributes & okw::fs_supports_reparse_points) && okw::local_family_available())
         p |= KAL_FS_PROP_LOCAL_ENDPOINT;
+    // A name with every link followed (0.23) is what this system answers for
+    // any handle it has opened (GetFinalPathNameByHandleW).
+    p |= KAL_FS_PROP_RESOLVED_NAME;
     return p;
 }
 
@@ -1280,6 +1283,28 @@ int kal_fs_link_create(kal_dir base, const char* name, kal_uintptr len,
     }
     okw::NtClose(h);
     return kal_ok;
+}
+
+// THE NAME WITH EVERY LINK FOLLOWED (0.23): the node opened for its attributes,
+// following every reparse point, and the name this system resolved for the
+// handle, in a drive's or a share's form (final_name).
+kal_intptr kal_fs_resolved_name(kal_dir base, const char* name, kal_uintptr len,
+                                char* out, kal_uintptr cap) {
+    void* root = dir_handle(base);
+    if (!root || !okw::acceptable(name, len)) return -kal_err_invalid;
+    void* h = nullptr;
+    const long r = open_relative(root, name, len, FILE_READ_ATTRIBUTES | SYNCHRONIZE, okw::file_open,
+                                 okw::file_open_for_backup_intent, &h);
+    if (!okw::ok(r)) return -okw::translate_nt(r);
+    wchar_t wide[okw::kMaxName];
+    const okw_uptr wn = final_name(h, wide, okw::kMaxName);
+    okw::NtClose(h);
+    if (wn == 0) return -kal_err_io;
+    char narrow[3 * okw::kMaxName];
+    const okw_uptr n = okw::narrow(wide, wn, narrow, sizeof narrow, false);
+    if (out != nullptr)
+        for (okw_uptr i = 0; i < n && i < cap; ++i) out[i] = narrow[i];
+    return static_cast<kal_intptr>(n);
 }
 
 kal_intptr kal_fs_link_read(kal_dir base, const char* name, kal_uintptr len,

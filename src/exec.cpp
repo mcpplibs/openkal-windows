@@ -41,6 +41,21 @@ void* kal_exec_alloc(kal_uintptr size) {
     return VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 }
 
+// AT AN ADDRESS (0.23): this system's reservation takes an address and fails,
+// reserving nothing, where anything is there or the address is not a multiple
+// of its sixty-four kibibytes of reservation.
+void* kal_exec_alloc_at(void* at, kal_uintptr size) {
+    if (size == 0 || at == nullptr) return nullptr;
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const unsigned long long quantum = si.dwAllocationGranularity ? si.dwAllocationGranularity : 65536;
+    if (reinterpret_cast<unsigned long long>(at) % quantum != 0) return nullptr;
+    const unsigned long long bytes = round_up(size, kPage);
+    void* p = VirtualAlloc(at, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (p != nullptr && p != at) { VirtualFree(p, 0, MEM_RELEASE); return nullptr; }
+    return p;
+}
+
 int kal_exec_publish(void* p, kal_uintptr size) {
     if (p == nullptr || size == 0) return kal_err_invalid;
     const unsigned long long bytes = round_up(size, kPage);
@@ -107,7 +122,7 @@ int kal_exec_map_part(void*, kal_uintptr, kal_uintptr, kal_file, kal_u64, kal_ui
 }
 
 kal_uintptr kal_exec_props(void) {
-    return KAL_EXEC_PROP_REPUBLISH | KAL_EXEC_PROP_AVAILABLE;
+    return KAL_EXEC_PROP_REPUBLISH | KAL_EXEC_PROP_AVAILABLE | KAL_EXEC_PROP_PLACE;
 }
 
 }  // extern "C"

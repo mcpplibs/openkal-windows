@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.22.0"
+openkal = "0.23.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.18.0"
+openkal-windows = "0.19.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -141,6 +141,14 @@ limits. That is what it is taken to mean here, and what the conformance suite
 observes is the part a caller depends on rather than the choice between the
 two: the region contains the stack of the thread that asked. It is measured on
 this system's own runner and again under Wine on a Linux one.
+
+## Version 0.19 (openkal 0.23)
+
+**A region at an address.** `kal_exec_alloc_at` is `VirtualAlloc` at the address,
+which reserves nothing where anything is there or the address is not a multiple
+of the sixty-four kibibytes of reservation. `KAL_EXEC_PROP_PLACE` is claimed; a
+part of a region is still not a file's (`KAL_EXEC_PROP_FILE`), so a loader given
+the address copies an image's stored segments rather than mapping them.
 
 ## Version 0.18 (openkal 0.22)
 
