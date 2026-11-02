@@ -210,7 +210,8 @@ jobs:
           headers = sorted(glob.glob("src/*.h"))
           for h in headers:
               text = open(h, encoding="utf-8").read()
-              declared |= set(re.findall(r'OKW_IMPORT\s+\w+\s+OKW_API\s+(\w+)\s*\(', text))
+              # A return type of several words (`unsigned long long') too.
+              declared |= set(re.findall(r'OKW_IMPORT\s+[\w\s\*]+?\s+OKW_API\s+(\w+)\s*\(', text))
               declared |= set(re.findall(
                   r'__declspec\(dllimport\)[\w\s\*]*?(\w+)\s*\(', text))
           exported = set()
@@ -258,11 +259,11 @@ jobs:
           # `kal_space_start`, which is clause 6.1's report arriving where a
           # report was not wanted.
           #
-          # So the six this implementation does provide are named, and the
-          # seventh is absent from the list for the same reason it is absent
+          # So the ones this implementation does provide are named, and
+          # `space` is absent from the list for the same reason it is absent
           # from the objects.
           bash .spec/tools/run-conformance.sh openkal-windows . \
-            full,exec,random,terminal,net,datagram,timeout,map $extra
+            full,exec,random,terminal,net,datagram,timeout,map,region,prof,debug $extra
 
       # run-conformance.sh above has already pointed the manifest at the
       # specification's working tree and restored it through a trap; this
@@ -447,7 +448,7 @@ jobs:
           WINEDEBUG: '-all'
         run: |
           bash .spec/tools/run-conformance.sh openkal-windows . \
-            full,exec,random,terminal,net,datagram,timeout,map \
+            full,exec,random,terminal,net,datagram,timeout,map,region,prof,debug \
             --target x86_64-windows-gnu
 
       - name: The exported surface is complete and contains nothing else
@@ -458,7 +459,7 @@ jobs:
           # interface: a name it fails to export is a failure, not an interface
           # it declines to provide.
           rm -rf target && mcpp build --target x86_64-windows-gnu
-          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o' | tr '\n' ' ')"
+          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o' ! -path '*/.build-mcpp/*' | tr '\n' ' ')"
           test -n "$objs" || { echo "no objects were found" >&2; exit 1; }
           bash .spec/tools/check-surface.sh --complete .spec/SURFACE.txt $objs
 
@@ -489,7 +490,7 @@ jobs:
           for profile in dev release; do
           echo "--- profile $profile"
           rm -rf target && mcpp build --features standalone --target x86_64-windows-gnu --profile "$profile"
-          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o')"
+          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o' ! -path '*/.build-mcpp/*')"
           test -n "$objs" || { echo "no objects were found; the check would pass vacuously" >&2; exit 1; }
 
           # The permitted set, and why each entry is in it.
@@ -526,7 +527,7 @@ jobs:
         run: |
           printf 'extern "C" int puts(const char*);\nextern "C" void okw_probe(void) { puts("x"); }\n' > src/probe.cpp
           rm -rf target && mcpp build --features standalone --target x86_64-windows-gnu
-          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o')"
+          objs="$(find target -path '*/obj/*' -name '*.o' ! -name '*.m.o' ! -path '*/.build-mcpp/*')"
           if ! nm --undefined-only $objs | awk '{print $2}' | grep -qx puts; then
             echo "the probe did not produce the reference it was written to produce" >&2
             rm -f src/probe.cpp; exit 1

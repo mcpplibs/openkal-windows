@@ -208,4 +208,41 @@ kal_intptr kal_env_system(char* out, kal_uintptr cap) {
     return give("windows", 7, out, cap);
 }
 
+// THE RESOURCE PREFERENCE (0.23): what the starter conveyed in KAL_RESOURCES
+// (process.cpp), read once; balanced where nothing was conveyed.
+int kal_env_resources(void) {
+    static volatile long long answer = -1;
+    long long a = okw::atomic::load(&answer);
+    if (a < 0) {
+        char v[16];
+        const kal_intptr n = kal_env_var("KAL_RESOURCES", 13, v, sizeof v);
+        a = KAL_RESOURCES_BALANCED;
+        if (n == 11 && same(v, 11, "performance", 11)) a = KAL_RESOURCES_PERFORMANCE;
+        else if (n == 7 && same(v, 7, "economy", 7)) a = KAL_RESOURCES_ECONOMY;
+        okw::atomic::store(&answer, a);
+    }
+    return static_cast<int>(a);
 }
+
+}
+
+namespace okw {
+// ECONOMY ON THIS SYSTEM: the program's pages are the first taken back when
+// memory is short (ProcessMemoryPriority, MEMORY_PRIORITY_LOW).
+void lower_memory_priority(void* process) {
+    const auto set = reinterpret_cast<pfn_SetProcessInformation_>(
+        system_function(L"kernel32.dll", "SetProcessInformation"));
+    if (!set) return;
+    unsigned long priority = 2;   // MEMORY_PRIORITY_LOW
+    set(process, 0 /* ProcessMemoryPriority */, &priority, sizeof priority);
+}
+}  // namespace okw
+
+namespace {
+// A program started for economy by a starter that did not set it (one that is
+// not of this implementation, or a person) sets it on itself.
+OKW_START_FN(economy_at_start) {
+    if (kal_env_resources() == KAL_RESOURCES_ECONOMY) okw::lower_memory_priority(GetCurrentProcess());
+}
+OKW_AT_START(economy_at_start);
+}  // namespace

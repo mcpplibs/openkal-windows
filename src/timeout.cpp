@@ -261,14 +261,11 @@ int kal_timeout_wait_process(kal_process p, kal_u64 ns, int* status, int* termin
     if (r == WAIT_TIMEOUT_) return kal_err_again;
     if (r != WAIT_OBJECT_0) return okw::translate_win32(GetLastError());
 
-    DWORD code = 0;
-    if (!GetExitCodeProcess(h, &code)) return okw::translate_win32(GetLastError());
-    if (status) *status = static_cast<int>(code);
-    // This system does not distinguish a program that ended by returning from
-    // one the environment ended: both are an exit code, and process.cpp reports
-    // the same thing.
-    if (terminated) *terminated = 0;
-    return kal_ok;
+    // The program has ended, and what it ended with is read as an unbounded
+    // wait reads it (process.cpp), so that the two report one program alike:
+    // until 0.19.0 this one called every end a returned number, where the
+    // other told the numbers this system gives a program it ended apart.
+    return kal_process_wait(p, status, terminated);
 }
 
 // The bound this system distinguishes. Both `WSAPoll' and the wait upon an

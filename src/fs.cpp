@@ -1,6 +1,8 @@
 #include "win.h"
 #include "endpoint.h"   // whether the local family exists (0.17)
 #include "handle.h"
+#include "rights.h"
+#include <openkal/env.h>
 #include <openkal/fs.h>
 #include <openkal/memory.h>
 #include <openkal/time.h>
@@ -27,6 +29,20 @@ namespace {
 
 
 constexpr okw_u64 kEpochDifference = 116444736000000000ull;
+
+// THE RIGHTS OF A DIRECTORY HANDLE (0.23, rights.h): an operation that would
+// change something beneath a read-only handle is refused before it is asked of
+// the system; one that did change something is recorded, and what a handle that
+// states nothing changes has listed no longer holds.
+inline bool refused_write(void* b) { return (okw::rights::of(b) & okw::rights::read_only) != 0; }
+inline void wrote(void* b, const char* n, kal_uintptr l) {
+    if (!okw::rights::g_any) return;
+    okw::rights::changed(b);
+    okw::rights::note(b, 'w', n, l);
+}
+inline void asked(void* b, bool present, const char* n, kal_uintptr l) {
+    if (okw::rights::g_any) okw::rights::note(b, present ? 's' : 'a', n, l);
+}
 
 kal_duration to_nanoseconds(okw_i64 ticks) {
     const okw_u64 t = static_cast<okw_u64>(ticks);
@@ -73,6 +89,119 @@ void* open_nt_directory(const wchar_t* nt, unsigned short bytes) {
 
 SRWLOCK_ g_table_lock{};
 DWORD    g_drives_seen = 0;
+bool     g_granted = false;
+
+// THE DIRECTORIES A STARTER GRANTED, WHEN THE PROGRAM WAS STARTED WITH GRANTS
+// (0.23).
+//
+// They arrive as handles this system placed in the program at the values they
+// had in the starter's duplicates, and their names in the variable
+// `kal_process_spawn' writes (process.cpp):
+//
+//     KAL_PREOPENS=<pid>{;<handle>,<len>,<name>}
+//
+// read only when `<pid>' is the program that started this one, so that a value
+// inherited through a program that does not read it --- a shell --- names no one
+// one generation further down. A handle that is not a directory is reported as
+// a preopen this program may not use. Each is made uninheritable as it is
+// taken over, so that a grant reaches the program it was made to and not that
+// program's own children (SPEC.md clause 7.13).
+//
+// WHAT A GRANT CARRIES travels beside it, read under the same condition:
+//
+//     KAL_GRANT_RIGHTS=<pid>{;<index>,<flags>,<record handle or -1>,<len>,<path>}
+//
+// Answers false when there is no such value, which leaves the directories this
+// implementation supplies by default.
+okw_uptr parent_id() {
+    okw_uptr basic[6] = {};
+    if (!okw::ok(::NtQueryInformationProcess(GetCurrentProcess(), 0 /* ProcessBasicInformation */,
+                                                basic, sizeof basic, nullptr)))
+        return 0;
+    return basic[5];   // InheritedFromUniqueProcessId
+}
+
+// The value of a variable this program was started with, in storage of its own.
+struct variable {
+    char* v = nullptr; okw_uptr n = 0;
+    explicit variable(const char* name) {
+        const kal_intptr len = kal_env_var(name, okw::length(name), nullptr, 0);
+        if (len < 0) return;
+        n = static_cast<okw_uptr>(len);
+        v = static_cast<char*>(kal_alloc(n + 1, 1));
+        if (!v) { n = 0; return; }
+        kal_env_var(name, okw::length(name), v, n);
+        v[n] = '\0';
+    }
+    ~variable() { if (v) kal_free(v, n + 1, 1); }
+};
+
+bool number(const char*& v, long long& out) {
+    bool neg = false;
+    if (*v == '-') { neg = true; ++v; }
+    if (*v < '0' || *v > '9') return false;
+    out = 0;
+    while (*v >= '0' && *v <= '9') out = out * 10 + (*v++ - '0');
+    if (neg) out = -out;
+    return true;
+}
+
+bool for_this_program(const char*& v) {
+    long long pid = 0;
+    return number(v, pid) && pid != 0 && static_cast<okw_uptr>(pid) == parent_id();
+}
+
+void adopt_rights(const preopen* t, kal_uintptr count) {
+    variable var("KAL_GRANT_RIGHTS");
+    const char* v = var.v;
+    if (v == nullptr || !for_this_program(v)) return;
+    while (*v == ';') {
+        ++v;
+        long long index = 0, flags = 0, record = -1, len = 0;
+        if (!number(v, index) || *v++ != ',' || !number(v, flags) || *v++ != ',' || !number(v, record)
+            || *v++ != ',' || !number(v, len) || *v++ != ',' || len < 0)
+            return;
+        for (long long i = 0; i < len; ++i) if (v[i] == '\0') return;
+        if (index >= 0 && static_cast<kal_uintptr>(index) < count && t[index].handle != 0)
+            okw::rights::adopt(okw::unpack(t[index].handle), static_cast<okw_u32>(flags),
+                               record < 0 ? nullptr : reinterpret_cast<void*>(static_cast<okw_uptr>(record)),
+                               v, static_cast<okw_uptr>(len));
+        v += len;
+    }
+}
+
+bool granted(preopen* t, kal_uintptr* n) {
+    variable var("KAL_PREOPENS");
+    const char* v = var.v;
+    if (v == nullptr || !for_this_program(v)) return false;
+    kal_uintptr k = 0;
+    while (*v == ';' && k < kMaxPreopens) {
+        ++v;
+        long long value = 0, len = 0;
+        if (!number(v, value) || *v++ != ',' || !number(v, len) || *v++ != ',' || len < 0
+            || static_cast<okw_uptr>(len) >= okw::kMaxName)
+            return false;
+        for (long long i = 0; i < len; ++i) if (v[i] == '\0') return false;
+        void* h = reinterpret_cast<void*>(static_cast<okw_uptr>(value));
+        okw::io_status_block s{};
+        okw::file_standard_information standard{};
+        const bool dir = value > 0
+            && okw::ok(okw::NtQueryInformationFile(h, &s, &standard, sizeof standard,
+                                                   okw::file_standard_information_class))
+            && standard.directory;
+        if (dir) SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+        for (long long i = 0; i < len; ++i) t[k].name[i] = v[i];
+        t[k].name[len] = '\0';
+        t[k].len = static_cast<okw_uptr>(len);
+        t[k].handle = dir ? okw::pack(h) : 0u;
+        ++k;
+        v += len;
+    }
+    if (*v != '\0') return false;
+    *n = k;
+    adopt_rights(t, k);
+    return true;
+}
 
 preopen* table(kal_uintptr* count) {
     static preopen t[kMaxPreopens];
@@ -80,8 +209,9 @@ preopen* table(kal_uintptr* count) {
     static bool opened = false;
     // A VOLUME MOUNTED SINCE INCEPTION IS APPENDED (K9, openkal 0.17: a
     // position once given keeps its directory). The system's map of drive
-    // letters is one word, so asking whether one appeared costs one call.
-    if (opened && GetLogicalDrives() != g_drives_seen) {
+    // letters is one word, so asking whether one appeared costs one call. A
+    // program started with grants has those and nothing else.
+    if (opened && !g_granted && GetLogicalDrives() != g_drives_seen) {
         AcquireSRWLockExclusive(&g_table_lock);
         const DWORD now = GetLogicalDrives();
         for (int d = 0; d < 26 && used < kMaxPreopens; ++d) {
@@ -98,6 +228,11 @@ preopen* table(kal_uintptr* count) {
             ++used;
         }
         g_drives_seen = now;
+        ReleaseSRWLockExclusive(&g_table_lock);
+    }
+    if (!opened) {
+        AcquireSRWLockExclusive(&g_table_lock);
+        if (!opened && granted(t, &used)) { g_granted = true; opened = true; }
         ReleaseSRWLockExclusive(&g_table_lock);
     }
     if (!opened) {
@@ -215,19 +350,60 @@ kal_uintptr put_name(const char* src, kal_uintptr n,
     return n;
 }
 
+// THE RECORDS OF A NODE THIS SYSTEM GIVES IN ONE REQUEST (Windows 10 1709;
+// the second, with the volume, 11 24H2): by handle, and by name without one
+// (`info_by_name' below).
+struct file_stat_information {
+    okw_i64 file_id, creation_time, last_access_time, last_write_time, change_time, allocation_size, end_of_file;
+    unsigned long attributes, reparse_tag, number_of_links, effective_access;
+};
+struct file_stat_basic_information {
+    okw_i64 file_id, creation_time, last_access_time, last_write_time, change_time, allocation_size, end_of_file;
+    unsigned long attributes, reparse_tag, number_of_links, device_type, device_characteristics, reserved;
+    okw_i64 volume_serial_number;
+    unsigned char file_id_128[16];
+};
+static_assert(sizeof(file_stat_information) == 72, "FILE_STAT_INFORMATION");
+static_assert(sizeof(file_stat_basic_information) == 104, "FILE_STAT_BASIC_INFORMATION");
+constexpr int file_stat_information_class = 68;
+constexpr int file_stat_basic_information_class = 77;
+bool class_refused(long r) {
+    return r == static_cast<long>(0xC0000003) /* INVALID_INFO_CLASS */ || r == static_cast<long>(0xC000000D)
+        || r == static_cast<long>(0xC00000BB) /* NOT_SUPPORTED */ || r == okw::status_not_implemented;
+}
+volatile long long g_stat_by_handle = 1;   // cleared where the system has not the record
+
 // Writes no more of the structure than the caller says exists on its side, and
-// reports which fields it filled.
+// reports which fields it filled. The node's record in one request where the
+// system gives it, and the basic and standard records otherwise.
 int fill(void* h, kal_u32 wanted, kal_node_info* out) {
     (void)wanted;
     okw::io_status_block s{};
     okw::file_basic_information basic{};
     okw::file_standard_information standard{};
-    long r = okw::NtQueryInformationFile(h, &s, &basic, sizeof basic,
-                                         okw::file_basic_information_class);
-    if (!okw::ok(r)) return okw::translate_nt(r);
-    r = okw::NtQueryInformationFile(h, &s, &standard, sizeof standard,
-                                    okw::file_standard_information_class);
-    if (!okw::ok(r)) return okw::translate_nt(r);
+    okw_i64 file_id = 0;
+    bool stat = false;
+    if (okw::atomic::load(&g_stat_by_handle)) {
+        file_stat_information st{};
+        const long q = okw::NtQueryInformationFile(h, &s, &st, sizeof st, file_stat_information_class);
+        if (okw::ok(q)) {
+            basic.last_write_time = st.last_write_time;
+            basic.attributes = st.attributes;
+            standard.end_of_file = st.end_of_file;
+            file_id = st.file_id;
+            stat = true;
+        } else if (q == static_cast<long>(0xC0000003) || q == okw::status_not_implemented) {
+            okw::atomic::store(&g_stat_by_handle, 0);
+        }
+    }
+    if (!stat) {
+        long r = okw::NtQueryInformationFile(h, &s, &basic, sizeof basic,
+                                             okw::file_basic_information_class);
+        if (!okw::ok(r)) return okw::translate_nt(r);
+        r = okw::NtQueryInformationFile(h, &s, &standard, sizeof standard,
+                                        okw::file_standard_information_class);
+        if (!okw::ok(r)) return okw::translate_nt(r);
+    }
 
     const kal_u32 self = out->self_size;
     kal_node_info v{};
@@ -273,9 +449,9 @@ int fill(void* h, kal_u32 wanted, kal_node_info* out) {
         okw::file_fs_volume_information info;
         wchar_t label_tail[128];
     } volume{};
-    okw::file_internal_information index{};
-    const long ri = okw::NtQueryInformationFile(h, &s, &index, sizeof index,
-                                                okw::file_internal_information_class);
+    okw::file_internal_information index{ file_id };
+    const long ri = stat ? 0 : okw::NtQueryInformationFile(h, &s, &index, sizeof index,
+                                                           okw::file_internal_information_class);
     const long rv = okw::NtQueryVolumeInformationFile(h, &s, &volume, sizeof volume,
                                                       okw::fs_volume_information_class);
     if (okw::ok(ri) && (okw::ok(rv) || rv == okw::status_buffer_overflow)) {
@@ -312,6 +488,14 @@ struct listing {
     okw_uptr used;
     okw_uptr at;
     bool     first;
+    // THE CLASS OF THE LISTING (0.23): FileIdFullDirectoryInformation, whose
+    // records carry the entry's size, times, attributes and identity, so that a
+    // listing that asks for them asks nothing more; FileDirectoryInformation on
+    // a volume that refuses the first, which carries all but the identity. The
+    // volume's serial number is the identity's other word (`fill').
+    int      cls;
+    bool     have_volume;
+    okw_u64  volume;
     // Aligned deliberately. The records this environment writes here begin with
     // fields it reads as machine words, and it requires the buffer they are
     // written into to be aligned for them. Placed after three words and a
@@ -413,10 +597,26 @@ int kal_fs_preopen(kal_uintptr index, kal_dir* out,
 int kal_fs_open_dir(kal_dir base, const char* name, kal_uintptr len, kal_dir* out) {
     void* root = dir_handle(base);
     if (!root || out == nullptr || !okw::acceptable(name, len)) return kal_err_invalid;
+    const okw_u32 rights = okw::rights::of(root);
+    if ((rights & okw::rights::unchanging) && okw::rights::known_absent(root, name, len)) {
+        asked(root, false, name, len);
+        return kal_err_not_found;
+    }
     void* h = nullptr;
     const long r = open_relative(root, name, len, FILE_LIST_DIRECTORY | GENERIC_READ,
                                  okw::file_open, okw::file_directory_file, &h);
-    if (!okw::ok(r)) return okw::translate_nt(r);
+    if (!okw::ok(r)) {
+        const int e = okw::translate_nt(r);
+        if (rights && (e == kal_err_not_found || e == kal_err_not_directory)) asked(root, false, name, len);
+        return e;
+    }
+    // A directory opened beneath a handle with rights has them; where the table
+    // has no room the directory is not handed out with more than its base.
+    if (rights && !okw::rights::derive(root, h, name, len)) {
+        okw::NtClose(h);
+        return kal_err_no_memory;
+    }
+    if (rights) asked(root, true, name, len);
     *out = kal_dir{ okw::pack(h) };
     return kal_ok;
 }
@@ -483,10 +683,25 @@ int kal_fs_open(kal_dir base, const char* name, kal_uintptr len,
     else if (truncate)        disposition = okw::file_overwrite;
     else                      disposition = okw::file_open;
 
+    const okw_u32 rights = okw::rights::of(root);
+    const bool changes = (flags & (KAL_OPEN_WRITE | KAL_OPEN_CREATE | KAL_OPEN_TRUNCATE | KAL_OPEN_APPEND)) != 0;
+    if (changes && (rights & okw::rights::read_only)) return kal_err_permission;
+    if (!create && (rights & okw::rights::unchanging) && okw::rights::known_absent(root, name, len)) {
+        asked(root, false, name, len);
+        return kal_err_not_found;
+    }
     void* h = nullptr;
     const long r = open_relative(root, name, len, access, disposition,
                                  okw::file_non_directory_file, &h);
-    if (!okw::ok(r)) return okw::translate_nt(r);
+    if (!okw::ok(r)) {
+        const int e = okw::translate_nt(r);
+        if (rights && (e == kal_err_not_found || e == kal_err_not_directory)) asked(root, false, name, len);
+        return e;
+    }
+    if (rights) {
+        if (changes) wrote(root, name, len);
+        else okw::rights::note(root, 'r', name, len);
+    }
     *out = kal_file{ okw::pack(h) };
     return kal_ok;
 }
@@ -497,6 +712,7 @@ void kal_fs_close_dir(kal_dir d) {
     // Before the close, because after it the same value may already name
     // another directory whose enumerations are not this one's.
     listings_end(h);
+    okw::rights::forget(h);
     okw::retire(d.h); okw::NtClose(h);
 }
 
@@ -648,10 +864,132 @@ int kal_fs_truncate(kal_file f, kal_u64 size) {
     return okw::ok(r) ? kal_ok : okw::translate_nt(r);
 }
 
+// AN ENQUIRY BY NAME IS ONE REQUEST WHERE THIS SYSTEM HAS ONE (0.19.0).
+//
+// Answered by opening the node, it is six: the open, four enquiries of the
+// handle --- the basic and standard records, the index, the volume --- and the
+// close. NtQueryInformationByName (Windows 10 1709) answers the record of all
+// but the volume for a name, without a handle; Windows 11 24H2 adds a record
+// that holds the volume's serial number as well. So:
+//
+//   FileStatBasicInformation   one request, everything;
+//   FileStatInformation        one request where the identity is not wanted;
+//                              two, with the base directory's volume, where the
+//                              name is one component and so cannot lie on
+//                              another volume; and otherwise the open below,
+//                              because a name of several components may pass
+//                              through a directory where another volume is
+//                              mounted, whose serial is not the base's.
+//
+// Either record describes the node the name ends at and does not follow it: a
+// node whose content is another name, asked about by a caller who wants it
+// resolved, is asked about by opening. A volume that refuses the record is
+// asked by opening; a system without the class is not asked again.
+namespace {
+
+volatile long long g_by_name = -1;   // -1 not asked; 0 none; 1 the stat record; 2 the basic one too
+pfn_NtQueryInformationByName_ g_query_by_name = nullptr;
+
+
+// kal_ok or a kal_err when answered; 1 when the node is to be opened instead.
+int info_by_name(void* root, const char* name, kal_uintptr len, kal_uintptr flags, kal_u32 wanted,
+                 kal_node_info* out, bool& absent) {
+    long long have = okw::atomic::load(&g_by_name);
+    if (have < 0) {
+        g_query_by_name = reinterpret_cast<pfn_NtQueryInformationByName_>(
+            okw::system_function(L"ntdll.dll", "NtQueryInformationByName"));
+        have = g_query_by_name ? 2 : 0;
+        okw::atomic::store(&g_by_name, have);
+    }
+    if (have == 0) return 1;
+    okw::wide_name w(name, len);
+    if (!w.ok) return 1;
+    okw::object_attributes attrs{};
+    attrs.length = sizeof attrs;
+    attrs.root_directory = root;
+    attrs.object_name = &w.string;
+    attrs.attributes = okw::obj_case_insensitive;
+    okw::io_status_block status{};
+    file_stat_basic_information b{};
+    bool basic = false;
+    long r = 0;
+    if (have == 2) {
+        r = g_query_by_name(&attrs, &status, &b, sizeof b, file_stat_basic_information_class);
+        if (r == static_cast<long>(0xC0000003) || r == okw::status_not_implemented) {
+            okw::atomic::store(&g_by_name, 1);    // this system has not the class
+        } else if (okw::ok(r)) {
+            basic = true;
+        } else if (!class_refused(r)) {
+            const int e = okw::translate_nt(r);
+            if (e == kal_err_not_found || e == kal_err_not_directory) { absent = true; return kal_ok; }
+            return 1;
+        }
+    }
+    if (!basic) {
+        file_stat_information st{};
+        r = g_query_by_name(&attrs, &status, &st, sizeof st, file_stat_information_class);
+        if (!okw::ok(r)) {
+            if (class_refused(r)) return 1;
+            const int e = okw::translate_nt(r);
+            if (e == kal_err_not_found || e == kal_err_not_directory) { absent = true; return kal_ok; }
+            return 1;
+        }
+        b.file_id = st.file_id; b.last_write_time = st.last_write_time; b.end_of_file = st.end_of_file;
+        b.attributes = st.attributes; b.reparse_tag = st.reparse_tag;
+    }
+    const bool link = (b.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    if (link && !(flags & KAL_FS_NO_RESOLVE)) return 1;
+    // The volume's serial number, where the record did not give it.
+    bool one_component = true;
+    for (kal_uintptr i = 0; i < len; ++i) if (name[i] == '/' || name[i] == '\\') one_component = false;
+    okw_u64 serial = basic ? static_cast<okw_u64>(b.volume_serial_number) : 0;
+    bool have_serial = basic;
+    if (!basic && (wanted & KAL_INFO_IDENTITY)) {
+        if (!one_component) return 1;
+        struct { okw::file_fs_volume_information info; wchar_t label_tail[128]; } volume{};
+        okw::io_status_block vs{};
+        const long rv = okw::NtQueryVolumeInformationFile(root, &vs, &volume, sizeof volume,
+                                                          okw::fs_volume_information_class);
+        have_serial = okw::ok(rv) || rv == okw::status_buffer_overflow;
+        serial = volume.info.serial_number;
+    }
+    const kal_u32 self = out->self_size;
+    kal_node_info v{};
+    v.self_size   = self;
+    v.present     = KAL_INFO_KIND | KAL_INFO_SIZE | KAL_INFO_MODIFIED | KAL_INFO_WRITABLE;
+    v.size        = static_cast<kal_u64>(b.end_of_file);
+    v.modified_ns = to_nanoseconds(b.last_write_time);
+    v.kind = link ? kal_node_link : (b.attributes & FILE_ATTRIBUTE_DIRECTORY) ? kal_node_directory : kal_node_file;
+    v.writable = (b.attributes & FILE_ATTRIBUTE_READONLY) ? 0 : 1;
+    if (have_serial && b.file_id != 0 && (wanted & KAL_INFO_IDENTITY)) {
+        v.identity[0] = serial;
+        v.identity[1] = static_cast<kal_u64>(b.file_id);
+        v.present |= KAL_INFO_IDENTITY;
+    }
+    put_bytes(out, &v, self < sizeof v ? self : static_cast<kal_u32>(sizeof v));
+    return kal_ok;
+}
+}  // namespace
+
 int kal_fs_info(kal_dir base, const char* name, kal_uintptr len,
                 kal_uintptr flags, kal_u32 wanted, kal_node_info* out) {
     void* root = dir_handle(base);
     if (!root || !info_ok(out) || !okw::acceptable(name, len)) return kal_err_invalid;
+    const okw_u32 rights = okw::rights::of(root);
+    if ((rights & okw::rights::unchanging) && okw::rights::known_absent(root, name, len)) {
+        asked(root, false, name, len);
+        fill_absent(out);
+        return kal_ok;
+    }
+    {
+        bool absent = false;
+        const int e = info_by_name(root, name, len, flags, wanted, out, absent);
+        if (e != 1) {
+            if (absent) fill_absent(out);
+            if (e == kal_ok && rights) asked(root, !absent, name, len);
+            return e;
+        }
+    }
     void* h = nullptr;
     // RESOLVES BY DEFAULT, SO THAT ASKING AND OPENING ANSWER THE SAME QUESTION.
     // Without FILE_OPEN_REPARSE_POINT this environment follows the node to what
@@ -668,11 +1006,13 @@ int kal_fs_info(kal_dir base, const char* name, kal_uintptr len,
         // something absent, when the enquiry resolves.
         const int e = okw::translate_nt(r);
         if (e == kal_err_not_found || e == kal_err_not_directory) {
+            if (rights) asked(root, false, name, len);
             fill_absent(out);
             return kal_ok;
         }
         return e;
     }
+    if (rights) asked(root, true, name, len);
     const int e = fill(h, wanted, out);
     okw::NtClose(h);
     return e;
@@ -710,6 +1050,7 @@ int kal_fs_set_modified_at(kal_dir base, const char* name, kal_uintptr len,
                            kal_u64 modified_ns) {
     void* root = dir_handle(base);
     if (!root || !okw::acceptable(name, len)) return kal_err_invalid;
+    if (refused_write(root)) return kal_err_permission;
 
     void* h = nullptr;
     const long r = open_relative(root, name, len, FILE_WRITE_ATTRIBUTES,
@@ -724,7 +1065,9 @@ int kal_fs_set_modified_at(kal_dir base, const char* name, kal_uintptr len,
     const long w = okw::NtSetInformationFile(h, &iosb, &basic, sizeof basic,
                                              okw::file_basic_information_class);
     okw::NtClose(h);
-    return okw::ok(w) ? kal_ok : okw::translate_nt(w);
+    if (!okw::ok(w)) return okw::translate_nt(w);
+    wrote(root, name, len);
+    return kal_ok;
 }
 
 // Whether a NAME's node may be started, version 0.13.
@@ -817,17 +1160,20 @@ int kal_fs_capacity(kal_dir d, kal_u64* total, kal_u64* available) {
 int kal_fs_mkdir(kal_dir base, const char* name, kal_uintptr len) {
     void* root = dir_handle(base);
     if (!root || !okw::acceptable(name, len)) return kal_err_invalid;
+    if (refused_write(root)) return kal_err_permission;
     void* h = nullptr;
     const long r = open_relative(root, name, len, FILE_LIST_DIRECTORY,
                                  okw::file_create, okw::file_directory_file, &h);
     if (!okw::ok(r)) return okw::translate_nt(r);
     okw::NtClose(h);
+    wrote(root, name, len);
     return kal_ok;
 }
 
 int kal_fs_remove(kal_dir base, const char* name, kal_uintptr len) {
     void* root = dir_handle(base);
     if (!root || !okw::acceptable(name, len)) return kal_err_invalid;
+    if (refused_write(root)) return kal_err_permission;
     void* h = nullptr;
     // One operation removes a name, and this environment distinguishes two
     // kinds of name where the interface does not, so neither kind is asked for.
@@ -863,7 +1209,9 @@ int kal_fs_remove(kal_dir base, const char* name, kal_uintptr len) {
                                       okw::file_disposition_information_class);
     }
     okw::NtClose(h);
-    return okw::ok(d) ? kal_ok : okw::translate_nt(d);
+    if (!okw::ok(d)) return okw::translate_nt(d);
+    wrote(root, name, len);
+    return kal_ok;
 }
 
 static int rename_with(kal_dir from, const char* a, kal_uintptr alen,
@@ -872,6 +1220,7 @@ static int rename_with(kal_dir from, const char* a, kal_uintptr alen,
     void* target_root = dir_handle(to);
     if (!source_root || !target_root) return kal_err_invalid;
     if (!okw::acceptable(a, alen) || !okw::acceptable(b, blen)) return kal_err_invalid;
+    if (refused_write(source_root) || refused_write(target_root)) return kal_err_permission;
 
     void* h = nullptr;
     // The name is renamed, a link included, never what it leads to.
@@ -907,7 +1256,10 @@ static int rename_with(kal_dir from, const char* a, kal_uintptr alen,
     kal_free(info, storage_bytes, alignof(okw::file_rename_information));
     if (!replace && n == static_cast<long>(0xC0000035) /* STATUS_OBJECT_NAME_COLLISION */)
         return kal_err_exists;
-    return okw::ok(n) ? kal_ok : okw::translate_nt(n);
+    if (!okw::ok(n)) return okw::translate_nt(n);
+    wrote(source_root, a, alen);
+    wrote(target_root, b, blen);
+    return kal_ok;
 }
 
 int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
@@ -944,16 +1296,27 @@ int kal_fs_list_begin(kal_dir d, kal_uintptr* iter) {
     if (!s) { okw::NtClose(own); return kal_err_no_memory; }
     s->handle = own; s->dir = root; s->busy = 0; s->doomed = 0;
     s->used = 0; s->at = 0; s->first = true;
+    s->cls = okw::file_id_full_directory_information_class;
+    {
+        struct { okw::file_fs_volume_information info; wchar_t label_tail[128]; } volume{};
+        okw::io_status_block vs{};
+        const long rv = okw::NtQueryVolumeInformationFile(own, &vs, &volume, sizeof volume,
+                                                          okw::fs_volume_information_class);
+        s->have_volume = okw::ok(rv) || rv == okw::status_buffer_overflow;
+        s->volume = s->have_volume ? static_cast<okw_u64>(volume.info.serial_number) : 0;
+    }
     AcquireSRWLockExclusive(&g_listings_lock);
     s->next = g_listings; g_listings = s;
     ReleaseSRWLockExclusive(&g_listings_lock);
     *iter = reinterpret_cast<kal_uintptr>(s);
+    if (okw::rights::g_any) okw::rights::note(root, 'l', "", 0);
     return kal_ok;
 }
 
-int kal_fs_list_next(kal_dir d, kal_uintptr* iter,
-                     char* name_out, kal_uintptr name_cap,
-                     kal_uintptr* name_len, int* kind) {
+namespace {
+// One entry of a listing, and what the record of it told (`info', where given).
+int list_step(kal_dir d, kal_uintptr* iter, char* name_out, kal_uintptr name_cap,
+              kal_uintptr* name_len, int* kind, kal_u32 wanted, kal_node_info* info) {
     // A closed directory is a released handle (clause 6.7), and closing it
     // released the iterator too, which fs.h states.
     void* root = dir_handle(d);
@@ -964,15 +1327,26 @@ int kal_fs_list_next(kal_dir d, kal_uintptr* iter,
     for (;;) {
         if (s->at >= s->used) {
             okw::io_status_block status{};
-            const long r = okw::NtQueryDirectoryFile(
+            long r = okw::NtQueryDirectoryFile(
                 s->handle, nullptr, nullptr, nullptr, &status,
                 s->buffer, static_cast<unsigned long>(sizeof s->buffer),
-                okw::file_directory_information_class, 0, nullptr, s->first ? 1 : 0);
+                s->cls, 0, nullptr, s->first ? 1 : 0);
+            // A volume that does not give an entry's identity in its listing
+            // refuses the class, and is listed by the one before it.
+            if (s->first && s->cls == okw::file_id_full_directory_information_class
+                && (r == static_cast<long>(0xC0000003) || r == static_cast<long>(0xC000000D)
+                    || r == static_cast<long>(0xC00000BB) || r == okw::status_not_implemented)) {
+                s->cls = okw::file_directory_information_class;
+                r = okw::NtQueryDirectoryFile(s->handle, nullptr, nullptr, nullptr, &status,
+                                              s->buffer, static_cast<unsigned long>(sizeof s->buffer),
+                                              s->cls, 0, nullptr, 1);
+            }
             s->first = false;
             if (!okw::ok(r)) {
                 listing_give(s, true);
                 *iter = 0;
                 if (name_len) *name_len = 0;
+                if (info) fill_absent(info);
                 // The end of a directory is reported here as a distinct status
                 // and is the ordinary outcome, not a failure.
                 return (static_cast<unsigned long>(r) == 0x80000006u) ? kal_ok
@@ -982,7 +1356,12 @@ int kal_fs_list_next(kal_dir d, kal_uintptr* iter,
             s->at = 0;
         }
 
+        // The two classes agree up to the length of the name; the name follows
+        // the identity in the second.
         auto* e = reinterpret_cast<okw::file_directory_information*>(s->buffer + s->at);
+        const bool full = s->cls == okw::file_id_full_directory_information_class;
+        const auto* x = reinterpret_cast<const okw::file_id_full_dir_information*>(e);
+        const wchar_t* wname = full ? x->file_name : e->file_name;
         const okw_uptr step = e->next_entry_offset ? e->next_entry_offset
                                                    : (s->used - s->at);
         s->at += step;
@@ -991,17 +1370,85 @@ int kal_fs_list_next(kal_dir d, kal_uintptr* iter,
         const okw_uptr chars = e->file_name_length / 2;
         // The two entries that name the directory and its parent are omitted.
         // They exist to support ascent, which this interface does not offer.
-        if (chars == 1 && e->file_name[0] == L'.') continue;
-        if (chars == 2 && e->file_name[0] == L'.' && e->file_name[1] == L'.') continue;
+        if (chars == 1 && wname[0] == L'.') continue;
+        if (chars == 2 && wname[0] == L'.' && wname[1] == L'.') continue;
 
-        const okw_uptr n = okw::narrow(e->file_name, chars, s->reported, sizeof s->reported);
+        const okw_uptr n = okw::narrow(wname, chars, s->reported, sizeof s->reported);
         put_name(s->reported, n, name_out, name_cap, name_len);
-        if (kind) *kind = (e->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? kal_node_link
-                        : (e->file_attributes & FILE_ATTRIBUTE_DIRECTORY)     ? kal_node_directory
-                                                                              : kal_node_file;
+        const int k = (e->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? kal_node_link
+                    : (e->file_attributes & FILE_ATTRIBUTE_DIRECTORY)     ? kal_node_directory
+                                                                          : kal_node_file;
+        if (kind) *kind = k;
+        if (info) {
+            // What the record carries, of the entry itself: a link is described
+            // as the link, as the listing found it.
+            kal_node_info v{};
+            v.self_size = info->self_size;
+            v.kind = k;
+            v.present = KAL_INFO_KIND;
+            if (wanted & KAL_INFO_SIZE) { v.size = static_cast<kal_u64>(e->end_of_file); v.present |= KAL_INFO_SIZE; }
+            if (wanted & KAL_INFO_MODIFIED) {
+                v.modified_ns = to_nanoseconds(e->last_write_time);
+                v.present |= KAL_INFO_MODIFIED;
+            }
+            if (wanted & KAL_INFO_WRITABLE) {
+                v.writable = (e->file_attributes & FILE_ATTRIBUTE_READONLY) ? 0 : 1;
+                v.present |= KAL_INFO_WRITABLE;
+            }
+            if ((wanted & KAL_INFO_IDENTITY) && full && s->have_volume && x->file_id != 0) {
+                v.identity[0] = s->volume;
+                v.identity[1] = static_cast<kal_u64>(x->file_id);
+                v.present |= KAL_INFO_IDENTITY;
+            }
+            const kal_u32 self = info->self_size;
+            put_bytes(info, &v, self < sizeof v ? self : static_cast<kal_u32>(sizeof v));
+        }
         listing_give(s, false);
         return kal_ok;
     }
+}
+}  // namespace
+
+int kal_fs_list_next(kal_dir d, kal_uintptr* iter,
+                     char* name_out, kal_uintptr name_cap,
+                     kal_uintptr* name_len, int* kind) {
+    return list_step(d, iter, name_out, name_cap, name_len, kind, 0, nullptr);
+}
+
+// THE LISTING WITH WHAT IT TOLD OF THE ENTRY (0.23): one request returns a
+// batch of records, each with the entry's size, times, attributes and identity.
+int kal_fs_list_next_info(kal_dir d, kal_uintptr* iter, char* name_out, kal_uintptr name_cap,
+                          kal_uintptr* name_len, kal_u32 wanted, kal_node_info* info) {
+    if (!info_ok(info)) return kal_err_invalid;
+    return list_step(d, iter, name_out, name_cap, name_len, nullptr, wanted, info);
+}
+
+// A HANDLE WITH LESS (0.23, rights.h).
+int kal_fs_dir_attenuate(kal_dir d, const kal_dir_rights* rights, kal_dir* out) {
+    void* h = dir_handle(d);
+    if (!h || rights == nullptr || out == nullptr) return kal_err_invalid;
+    // The fields before `record': two words of thirty-two bits and a flags word.
+    if (rights->self_size < sizeof(kal_u32) * 2 + sizeof(kal_uintptr)) return kal_err_invalid;
+    constexpr kal_uintptr known = KAL_DIR_READ_ONLY | KAL_DIR_UNCHANGING | KAL_DIR_RECORDED;
+    if ((rights->flags & ~known) != 0) return kal_err_invalid;
+    void* record = nullptr;
+    if (rights->flags & KAL_DIR_RECORDED) {
+        if (rights->self_size < sizeof(kal_dir_rights)) return kal_err_invalid;
+        record = file_handle(rights->record);
+        if (!record) return kal_err_invalid;
+        // Opened for writing: the record is appended to, not read.
+        okw::io_status_block st{};
+        unsigned long access = 0;
+        if (!okw::ok(okw::NtQueryInformationFile(record, &st, &access, sizeof access,
+                                                 okw::file_access_information_class))
+            || (access & (FILE_WRITE_DATA | FILE_APPEND_DATA)) == 0)
+            return kal_err_invalid;
+    }
+    void* nh = nullptr;
+    const int e = okw::rights::attenuate(h, static_cast<okw_u32>(rights->flags), record, &nh);
+    if (e != kal_ok) return e;
+    *out = kal_dir{ okw::pack(nh) };
+    return kal_ok;
 }
 
 // The properties of the volume a directory is on.
@@ -1070,7 +1517,12 @@ kal_uintptr kal_fs_props(kal_dir d) {
     struct { okw::file_fs_attribute_information info; wchar_t rest[64]; } a{};
     const long r = okw::NtQueryVolumeInformationFile(h, &s, &a, sizeof a,
                                                      okw::fs_attribute_information_class);
-    if (!okw::ok(r)) return conservative;
+    if (!okw::ok(r)) {
+        const okw_u32 rights = okw::rights::of(h);
+        return conservative | KAL_FS_PROP_RESOLVED_NAME | KAL_FS_PROP_ATTENUATE
+             | ((rights & okw::rights::read_only) ? KAL_FS_PROP_READ_ONLY : 0u)
+             | ((rights & okw::rights::unchanging) ? KAL_FS_PROP_UNCHANGING : 0u);
+    }
 
     kal_uintptr p = conservative;
     if (a.info.attributes & okw::fs_case_sensitive_search) p |= KAL_FS_PROP_CASE_SENSITIVE;
@@ -1104,6 +1556,18 @@ kal_uintptr kal_fs_props(kal_dir d) {
     // offers the local family.
     if ((a.info.attributes & okw::fs_supports_reparse_points) && okw::local_family_available())
         p |= KAL_FS_PROP_LOCAL_ENDPOINT;
+    // A name with every link followed (0.23) is what this system answers for
+    // any handle it has opened (GetFinalPathNameByHandleW).
+    p |= KAL_FS_PROP_RESOLVED_NAME;
+    // A handle with less, and what this one carries (0.23, rights.h).
+    const okw_u32 rights = okw::rights::of(h);
+    p |= KAL_FS_PROP_ATTENUATE;
+    if (rights & okw::rights::read_only)  p |= KAL_FS_PROP_READ_ONLY;
+    if (rights & okw::rights::unchanging) p |= KAL_FS_PROP_UNCHANGING;
+    // A listing gives size, time and identity where the volume keeps an
+    // identity for each file that it can be opened by --- the one its listing
+    // reports (0.23).
+    if (a.info.attributes & okw::fs_supports_open_by_file_id) p |= KAL_FS_PROP_LIST_INFO;
     return p;
 }
 
@@ -1188,6 +1652,7 @@ int kal_fs_link_create(kal_dir base, const char* name, kal_uintptr len,
         return kal_err_invalid;
     if ((flags & ~static_cast<kal_uintptr>(KAL_FS_LINK_DIRECTORY)) != 0) return kal_err_invalid;
     if ((kal_fs_props(base) & KAL_FS_PROP_MAKE_LINKS) == 0) return kal_err_not_supported;
+    if (refused_write(root)) return kal_err_permission;
 
     struct scratch { wchar_t dir[okw::kMaxName]; wchar_t link[okw::kMaxName];
                      wchar_t target[okw::kMaxName]; wchar_t resolved[okw::kMaxName];
@@ -1229,7 +1694,7 @@ int kal_fs_link_create(kal_dir base, const char* name, kal_uintptr len,
                                                                   okw::file_basic_information_class))
                               && (basic.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
             okw::NtClose(probe);
-            if (link) return kal_ok;
+            if (link) { wrote(root, name, len); return kal_ok; }
         }
     }
     if (made) return kal_err_io;
@@ -1279,7 +1744,40 @@ int kal_fs_link_create(kal_dir base, const char* name, kal_uintptr len,
         return okw::translate_win32(e);
     }
     okw::NtClose(h);
+    wrote(root, name, len);
     return kal_ok;
+}
+
+// THE NAME WITH EVERY LINK FOLLOWED (0.23): the node opened for its attributes,
+// following every reparse point, and the name this system resolved for the
+// handle, in a drive's or a share's form (final_name).
+kal_intptr kal_fs_resolved_name(kal_dir base, const char* name, kal_uintptr len,
+                                char* out, kal_uintptr cap) {
+    void* root = dir_handle(base);
+    if (!root || !okw::acceptable(name, len)) return -kal_err_invalid;
+    const okw_u32 rights = okw::rights::of(root);
+    if ((rights & okw::rights::unchanging) && okw::rights::known_absent(root, name, len)) {
+        asked(root, false, name, len);
+        return -kal_err_not_found;
+    }
+    void* h = nullptr;
+    const long r = open_relative(root, name, len, FILE_READ_ATTRIBUTES | SYNCHRONIZE, okw::file_open,
+                                 okw::file_open_for_backup_intent, &h);
+    if (!okw::ok(r)) {
+        const int e = okw::translate_nt(r);
+        if (rights && (e == kal_err_not_found || e == kal_err_not_directory)) asked(root, false, name, len);
+        return -e;
+    }
+    if (rights) asked(root, true, name, len);
+    wchar_t wide[okw::kMaxName];
+    const okw_uptr wn = final_name(h, wide, okw::kMaxName);
+    okw::NtClose(h);
+    if (wn == 0) return -kal_err_io;
+    char narrow[3 * okw::kMaxName];
+    const okw_uptr n = okw::narrow(wide, wn, narrow, sizeof narrow, false);
+    if (out != nullptr)
+        for (okw_uptr i = 0; i < n && i < cap; ++i) out[i] = narrow[i];
+    return static_cast<kal_intptr>(n);
 }
 
 kal_intptr kal_fs_link_read(kal_dir base, const char* name, kal_uintptr len,

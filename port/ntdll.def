@@ -11,6 +11,7 @@ NtFlushBuffersFile
 NtLockFile
 NtQueryDirectoryFile
 NtQueryInformationFile
+NtQueryInformationProcess
 NtQueryVolumeInformationFile
 NtReadFile
 NtSetInformationFile

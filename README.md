@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.22.0"
+openkal = "0.23.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.18.0"
+openkal-windows = "0.19.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -141,6 +141,61 @@ limits. That is what it is taken to mean here, and what the conformance suite
 observes is the part a caller depends on rather than the choice between the
 two: the region contains the stack of the thread that asked. It is measured on
 this system's own runner and again under Wine on a Linux one.
+
+## Version 0.19 (openkal 0.23)
+
+**A region at an address.** `kal_exec_alloc_at` reserves at the address, and
+nothing where anything is there or the address is not a multiple of the
+sixty-four kibibytes of reservation. `KAL_EXEC_PROP_PLACE` is claimed.
+
+**A part of a region is a file's** (`KAL_EXEC_PROP_FILE`, where the system has
+placeholders: Windows 10 1803). A region is a placeholder replaced by a view of a
+section of the paging file of the region's size. A part made a file's is the
+view unmapped back to a placeholder, split, the part replaced by a view of the
+file and the rest by views of the same section at the same offsets, which hold
+what they held; the region is a short table of those views. Views are placed in
+sixty-four kibibytes, so a part not at that granularity is `kal_err_not_supported`
+and the region is unchanged. `KAL_EXEC_MAP_PREFETCH` is `PrefetchVirtualMemory`.
+`kal_exec_seal_part` makes a part read-only; `KAL_EXEC_PROP_SEAL_FOREVER` is not
+claimed, because the holder of a view can always change its protection.
+
+**Grants.** `KAL_PROCESS_PROP_GRANT_DIR` is claimed. A grant is a duplicate of the
+caller's handle, inheritable for the one start and named in its explicit list;
+an inherited handle keeps its value, and the started program learns the values,
+the names and what each carries from `KAL_PREOPENS` and `KAL_GRANT_RIGHTS`, read
+only where the number in them is the program that started it. A grant is made
+uninheritable as it is taken over. `KAL_SPAWN_CONFINE` is refused: this system
+holds a program to directories only through the files' security descriptors,
+which a start does not change.
+
+**Attenuation and records** (`kal_fs_dir_attenuate`): the table of the other two
+implementations, indexed by a handle's slot. A listing answers that a name is
+absent only where no other spelling could reach an entry: a name of ASCII with
+no `~` (a short name the listing does not report), in a directory whose entries
+are ASCII. A record is appended through a handle of its own opened with
+`FILE_APPEND_DATA`, and ended by `kal_exit` or the runtime's terminators.
+
+**One request where the system has one.** A listing reads
+`FileIdFullDirectoryInformation`, whose records carry each entry's size, times,
+attributes and identity (`kal_fs_list_next_info`; `KAL_FS_PROP_LIST_INFO` where
+the volume states `FILE_SUPPORTS_OPEN_BY_FILE_ID`). `kal_fs_info` asks
+`NtQueryInformationByName` for the node's record --- with the volume's serial
+number from 24H2 (`FileStatBasicInformation`), and otherwise
+(`FileStatInformation`, 1709) with the base directory's for a name of one
+component --- and opens the node where the record cannot answer: a link to be
+resolved, an identity across components, a volume that refuses the record.
+
+**Observation.** A fault no handler takes is reported, by the filter this system
+calls before it ends the program, with each frame's file, offset and symbol: the
+file a part of a region maps (an ELF image) or the module (a PE image, from its
+COFF symbol table). Samples are taken by a context of the program's own that
+suspends each other context that used the processor since the last tick.
+Touches are a part's execution taken away and given back, page by page, by a
+first look at the access violations of the kind that executes.
+`kal_process_info` reports page faults as one count, `faults_minor`.
+`kal_process_wait` reports a program this system ended for a fault as
+terminated. A preference for economy lowers the started program's memory
+priority; `kal_memory_info` is `GlobalMemoryStatusEx` within the job's limits.
 
 ## Version 0.18 (openkal 0.22)
 

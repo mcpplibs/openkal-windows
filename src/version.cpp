@@ -17,7 +17,10 @@ kal_u64 kal_interfaces(void) {
          | KAL_IFACE_FS     | KAL_IFACE_PROCESS  | KAL_IFACE_TASK
          | KAL_IFACE_EXEC   | KAL_IFACE_TERMINAL | KAL_IFACE_NET
          | KAL_IFACE_DATAGRAM | KAL_IFACE_TIMEOUT  | KAL_IFACE_MAP
-         | KAL_IFACE_REGION;
+         | KAL_IFACE_REGION
+         // openkal.prof and openkal.debug for a program of this environment
+         // (0.23): samples and a fault's report (observe.cpp).
+         | KAL_IFACE_PROF     | KAL_IFACE_DEBUG;
 }
 
 }
