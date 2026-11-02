@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.20.0"
+openkal = "0.21.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.16.0"
+openkal-windows = "0.17.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -141,6 +141,18 @@ limits. That is what it is taken to mean here, and what the conformance suite
 observes is the part a caller depends on rather than the choice between the
 two: the region contains the stack of the thread that asked. It is measured on
 this system's own runner and again under Wine on a Linux one.
+
+## Version 0.17 (openkal 0.21)
+
+**Instructions from a file are not provided.** `kal_exec_map_part` reports
+`kal_err_not_supported` and `KAL_EXEC_PROP_FILE` is not claimed: this system maps
+a view of a file only where nothing is mapped, and a part of a reservation
+becomes a view (`MapViewOfFile3` with `MEM_REPLACE_PLACEHOLDER`) only where the
+reservation was made of placeholders and the part split from it before anything
+was committed there. A region would then be a set of pieces released one by
+one, and this implementation would keep the table of them (clause 7.1). A
+loader copies the file's bytes. An ended program's processor time was already
+reported: the process object keeps it while the handle is held.
 
 ## Version 0.16 (openkal 0.20)
 

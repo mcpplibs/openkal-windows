@@ -94,6 +94,18 @@ int kal_exec_publish_part(void* region, kal_uintptr offset, kal_uintptr size) {
     return kal_ok;
 }
 
+// A PART THAT IS A FILE'S (0.21) IS NOT PROVIDED, AND KAL_EXEC_PROP_FILE IS
+// WITHHELD. This system maps a view of a file only where nothing is: a part of
+// a reservation becomes a view (MapViewOfFile3, MEM_REPLACE_PLACEHOLDER) only
+// where the reservation was made of placeholders and the part is a placeholder
+// of its own, split from it before anything was committed there. A region
+// would then be a set of pieces, each released by its own call, and this
+// implementation would keep the table of them (clause 7.1). A loader copies the
+// file's bytes, as it does where the position is zero.
+int kal_exec_map_part(void*, kal_uintptr, kal_uintptr, kal_file, kal_u64, kal_uintptr) {
+    return kal_err_not_supported;
+}
+
 kal_uintptr kal_exec_props(void) {
     return KAL_EXEC_PROP_REPUBLISH | KAL_EXEC_PROP_AVAILABLE;
 }
