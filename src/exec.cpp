@@ -129,6 +129,7 @@ struct piece {
     okw_uptr off, len;
     bool     file;      // a view of a file; otherwise of the region's section
     kal_u64  at;        // the file's offset, for a file's
+    bool     written;   // a file's view written privately (KAL_EXEC_MAP_WRITE)
 };
 
 struct region {
@@ -184,7 +185,7 @@ void* made(const calls& c, void* at, kal_uintptr size) {
         CloseHandle(section);
         return nullptr;
     }
-    r->pieces[r->count++] = piece{ 0, static_cast<okw_uptr>(bytes), false, 0 };
+    r->pieces[r->count++] = piece{ 0, static_cast<okw_uptr>(bytes), false, 0, false };
     AcquireSRWLockExclusive(&g_regions_lock);
     r->next = g_regions;
     g_regions = r;
@@ -194,7 +195,8 @@ void* made(const calls& c, void* at, kal_uintptr size) {
 
 // The protection of a range of a region: each view of the section in it, as a
 // call of this system's own reaches no further than one view. A view of a file
-// keeps what it was given (exec.h: it is neither published nor written).
+// keeps what it was given (exec.h: it is neither published nor written), unless
+// it was given to be written, which is protected as the section's views are.
 int protect(void* base, okw_uptr off, okw_uptr size, DWORD how) {
     DWORD before = 0;
     AcquireSRWLockExclusive(&g_regions_lock);
@@ -209,7 +211,7 @@ int protect(void* base, okw_uptr off, okw_uptr size, DWORD how) {
         const piece& p = r->pieces[i];
         const okw_uptr lo = p.off > off ? p.off : off;
         const okw_uptr hi = p.off + p.len < off + size ? p.off + p.len : off + size;
-        if (lo >= hi || p.file) continue;
+        if (lo >= hi || (p.file && !p.written)) continue;
         if (!VirtualProtect(r->base + lo, hi - lo, how, &before)) e = okw::translate_win32(GetLastError());
     }
     ReleaseSRWLockExclusive(&g_regions_lock);
@@ -385,9 +387,10 @@ int kal_exec_seal_part(void* region, kal_uintptr offset, kal_uintptr size, kal_u
 int kal_exec_map_part(void* base, kal_uintptr offset, kal_uintptr size, kal_file file, kal_u64 at,
                       kal_uintptr how) {
     const kal_uintptr g = kal_exec_granularity();
-    constexpr kal_uintptr known = KAL_EXEC_MAP_EXECUTE | KAL_EXEC_MAP_PREFETCH | KAL_EXEC_MAP_BTI;
+    constexpr kal_uintptr known = KAL_EXEC_MAP_EXECUTE | KAL_EXEC_MAP_PREFETCH | KAL_EXEC_MAP_BTI | KAL_EXEC_MAP_WRITE;
     if (base == nullptr || size == 0 || (offset & (g - 1)) != 0 || (size & (g - 1)) != 0
-        || at % KAL_MAP_ALIGNMENT != 0 || (how & ~known) != 0)
+        || at % KAL_MAP_ALIGNMENT != 0 || (how & ~known) != 0
+        || ((how & KAL_EXEC_MAP_WRITE) && (how & KAL_EXEC_MAP_EXECUTE)))
         return kal_err_invalid;
     void* fh = okw::unpack(file.h);
     if (!fh) return kal_err_invalid;
@@ -410,11 +413,14 @@ int kal_exec_map_part(void* base, kal_uintptr offset, kal_uintptr size, kal_file
     if (offset % kView != 0 || size % kView != 0) return kal_err_not_supported;
 
     // The file's section, executable where asked: a file whose access does not
-    // let it be executed is a property of the file.
+    // let it be executed is a property of the file. One written privately is a
+    // section of copies on write (PAGE_WRITECOPY), which never changes the file.
     const bool execute = (how & KAL_EXEC_MAP_EXECUTE) != 0;
+    const bool written = (how & KAL_EXEC_MAP_WRITE) != 0;
+    const DWORD view_prot = execute ? PAGE_EXECUTE_READ : written ? PAGE_WRITECOPY : PAGE_READONLY;
     void* xh = reopen(fh, FILE_READ_DATA | (execute ? FILE_EXECUTE_ : 0u));
     if (!xh) return execute ? kal_err_not_supported : kal_err_permission;
-    HANDLE fsec = CreateFileMappingW(xh, nullptr, execute ? PAGE_EXECUTE_READ : PAGE_READONLY, 0, 0, nullptr);
+    HANDLE fsec = CreateFileMappingW(xh, nullptr, view_prot, 0, 0, nullptr);
     const DWORD why = fsec ? 0 : GetLastError();
     okw::NtClose(xh);
     if (!fsec) return why == ERROR_ACCESS_DENIED ? kal_err_not_supported : okw::translate_win32(why);
@@ -453,7 +459,7 @@ int kal_exec_map_part(void* base, kal_uintptr offset, kal_uintptr size, kal_file
     auto own = [&](okw_uptr off, okw_uptr len) { return len == 0 || section_view(c, r->section, r->base + off, off, len); };
     const bool before = own(p0, offset - p0);
     bool part = c.map3(fsec, self, r->base + offset, at, size, MEM_REPLACE_PLACEHOLDER_,
-                       execute ? PAGE_EXECUTE_READ : PAGE_READONLY, nullptr, 0) == r->base + offset;
+                       view_prot, nullptr, 0) == r->base + offset;
     const DWORD part_why = part ? 0 : GetLastError();
     // A file that could not be mapped leaves the part what it was.
     if (!part) own(offset, size);
@@ -464,9 +470,9 @@ int kal_exec_map_part(void* base, kal_uintptr offset, kal_uintptr size, kal_file
     // The table: the view that was, as the three it is now.
     piece pieces[3];
     unsigned n = 0;
-    if (p0 < offset) pieces[n++] = piece{ p0, offset - p0, false, 0 };
-    pieces[n++] = piece{ offset, size, part, part ? at : 0 };
-    if (offset + size < p1) pieces[n++] = piece{ offset + size, p1 - offset - size, false, 0 };
+    if (p0 < offset) pieces[n++] = piece{ p0, offset - p0, false, 0, false };
+    pieces[n++] = piece{ offset, size, part, part ? at : 0, part && written };
+    if (offset + size < p1) pieces[n++] = piece{ offset + size, p1 - offset - size, false, 0, false };
     for (unsigned i = r->count; i > k + 1; --i) r->pieces[i + n - 2] = r->pieces[i - 1];
     for (unsigned i = 0; i < n; ++i) r->pieces[k + i] = pieces[i];
     r->count += n - 1;
