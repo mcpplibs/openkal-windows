@@ -15,10 +15,9 @@
 // CreateProcessW by different paths: inheritance disabled, and inheritance
 // enabled and narrowed to an explicit list.
 //
-// It also observes that a grant is refused. This environment has no numbering a
-// preopen could arrive under, KAL_PROCESS_PROP_GRANT_DIR is not claimed, and a
-// program started without the directories it was asked to receive is not the
-// program the caller asked for (clause 6.2).
+// A grant is a directory handle the caller places on purpose, and reaches the
+// started program by the same list (from 0.19.0, openkal 0.23); what it
+// receives is observed in tests/openkal_0_23.cpp.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -148,20 +147,6 @@ int main(int argc, char** argv) {
             "an unplaced inheritable handle does not reach a program started without streams");
     observe(volume, self, true,
             "an unplaced inheritable handle does not reach a program started with a placed stream");
-
-    // A grant this implementation does not claim is refused, not ignored.
-    check((kal_process_props() & KAL_PROCESS_PROP_GRANT_DIR) == 0,
-          "the directory grant is not claimed");
-    {
-        const kal_preopen grant{ volume, "x", 1 };
-        const kal_spawn how{ volume, volume, nullptr, &grant, 1, 0 };
-        const char* argv1[1] = { "x" };
-        const kal_uintptr lens1[1] = { 1 };
-        kal_process p{};
-        check(kal_process_spawn(&how, "x", 1, argv1, lens1, 1, nullptr, nullptr, 0,
-                                nullptr, &p) == kal_err_not_supported,
-              "a grant is refused rather than a program started without it");
-    }
 
     std::printf("openkal-windows: what a started program receives\n");
     return failures == 0 ? 0 : 1;

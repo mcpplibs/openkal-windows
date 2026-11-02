@@ -426,6 +426,10 @@ OKW_IMPORT BOOL   OKW_API WaitOnAddress(volatile void*, void*, unsigned long lon
 struct SRWLOCK_ { LPVOID Ptr; };
 OKW_IMPORT void   OKW_API AcquireSRWLockExclusive(SRWLOCK_*);
 OKW_IMPORT void   OKW_API ReleaseSRWLockExclusive(SRWLOCK_*);
+// Shared, and without waiting, for a fault's report (0.23): a context that
+// faulted while another held the lock reports less rather than not at all.
+OKW_IMPORT unsigned char OKW_API TryAcquireSRWLockShared(SRWLOCK_*);
+OKW_IMPORT void   OKW_API ReleaseSRWLockShared(SRWLOCK_*);
 OKW_IMPORT void   OKW_API WakeByAddressSingle(void*);
 OKW_IMPORT void   OKW_API WakeByAddressAll(void*);
 
@@ -579,14 +583,119 @@ OKW_IMPORT BOOL   OKW_API K32GetProcessMemoryInfo(HANDLE, PROCESS_MEMORY_COUNTER
 OKW_IMPORT HANDLE OKW_API CreateIoCompletionPort(HANDLE, HANDLE, unsigned long long, DWORD);
 OKW_IMPORT BOOL   OKW_API GetQueuedCompletionStatus(HANDLE, DWORD*, unsigned long long*, OVERLAPPED**, DWORD);
 
+// ── openkal 0.23 ────────────────────────────────────────────────────────────
+//
+// A handle granted to a started program is a duplicate made inheritable for
+// the one start, and named in the start's explicit list (kal_process_spawn).
+OKW_IMPORT BOOL   OKW_API DuplicateHandle(HANDLE, HANDLE, HANDLE, HANDLE*, DWORD, BOOL, DWORD);
+inline constexpr DWORD DUPLICATE_SAME_ACCESS = 0x2u;
+
+// What the machine has, and what it can give now (kal_memory_info).
+struct MEMORYSTATUSEX_ {
+    DWORD dwLength;
+    DWORD dwMemoryLoad;
+    unsigned long long ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile;
+    unsigned long long ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
+};
+static_assert(sizeof(MEMORYSTATUSEX_) == 64, "MEMORYSTATUSEX");
+OKW_IMPORT BOOL   OKW_API GlobalMemoryStatusEx(MEMORYSTATUSEX_*);
+
+// Where an address lies, and what is there (kal_exec_*, the fault report).
+struct MEMORY_BASIC_INFORMATION_ {
+    LPVOID BaseAddress;
+    LPVOID AllocationBase;
+    DWORD  AllocationProtect;
+    WORD   PartitionId;
+    unsigned long long RegionSize;
+    DWORD  State;
+    DWORD  Protect;
+    DWORD  Type;
+};
+static_assert(sizeof(MEMORY_BASIC_INFORMATION_) == 48, "MEMORY_BASIC_INFORMATION");
+OKW_IMPORT unsigned long long OKW_API VirtualQuery(LPCVOID, MEMORY_BASIC_INFORMATION_*, unsigned long long);
+inline constexpr DWORD MEM_IMAGE_  = 0x1000000u;
+inline constexpr DWORD PAGE_NOACCESS = 0x01u;
+inline constexpr DWORD PAGE_EXECUTE_READWRITE = 0x40u;
+inline constexpr DWORD FILE_EXECUTE_ = 0x20u;
+// Memory read where it may not be there: a frame of a broken chain is refused
+// rather than read (the fault report, samples).
+OKW_IMPORT BOOL   OKW_API ReadProcessMemory(HANDLE, LPCVOID, LPVOID, unsigned long long, unsigned long long*);
+// The file a view of a file maps, in the object manager's spelling of its name.
+OKW_IMPORT DWORD  OKW_API K32GetMappedFileNameW(HANDLE, LPVOID, LPWSTR, DWORD);
+
+// THE FAULT REPORT is the filter this system calls for an exception no
+// handler took --- a fault that ends the program --- and not a first look at
+// every exception: a program that takes an access of its own on purpose
+// (a guard page, a probe) is not reported.
+struct EXCEPTION_RECORD_ {
+    DWORD ExceptionCode;
+    DWORD ExceptionFlags;
+    EXCEPTION_RECORD_* ExceptionRecord;
+    LPVOID ExceptionAddress;
+    DWORD NumberParameters;
+    unsigned long long ExceptionInformation[15];
+};
+struct EXCEPTION_POINTERS_ { EXCEPTION_RECORD_* ExceptionRecord; void* ContextRecord; };
+using TOP_LEVEL_FILTER_ = long (OKW_API*)(EXCEPTION_POINTERS_*);
+OKW_IMPORT TOP_LEVEL_FILTER_ OKW_API SetUnhandledExceptionFilter(TOP_LEVEL_FILTER_);
+
+// SAMPLES: a context of this program's own that suspends each of the others
+// and reads where it stands.
+OKW_IMPORT HANDLE OKW_API OpenThread(DWORD, BOOL, DWORD);
+OKW_IMPORT DWORD  OKW_API SuspendThread(HANDLE);
+OKW_IMPORT BOOL   OKW_API GetThreadContext(HANDLE, void*);
+OKW_IMPORT BOOL   OKW_API QueryThreadCycleTime(HANDLE, unsigned long long*);
+OKW_IMPORT BOOL   OKW_API GetThreadTimes(HANDLE, FILETIME*, FILETIME*, FILETIME*, FILETIME*);
+OKW_IMPORT HANDLE OKW_API CreateToolhelp32Snapshot(DWORD, DWORD);
+struct THREADENTRY32_ {
+    DWORD dwSize, cntUsage, th32ThreadID, th32OwnerProcessID;
+    LONG  tpBasePri, tpDeltaPri;
+    DWORD dwFlags;
+};
+OKW_IMPORT BOOL   OKW_API Thread32First(HANDLE, THREADENTRY32_*);
+OKW_IMPORT BOOL   OKW_API Thread32Next(HANDLE, THREADENTRY32_*);
+OKW_IMPORT HANDLE OKW_API CreateWaitableTimerExW(SECURITY_ATTRIBUTES*, LPCWSTR, DWORD, DWORD);
+OKW_IMPORT BOOL   OKW_API SetWaitableTimer(HANDLE, const LARGE_INTEGER*, LONG, void*, LPVOID, BOOL);
+inline constexpr DWORD THREAD_SUSPEND_RESUME_ = 0x0002u;
+inline constexpr DWORD THREAD_GET_CONTEXT_    = 0x0008u;
+inline constexpr DWORD THREAD_QUERY_LIMITED_INFORMATION_ = 0x0800u;
+inline constexpr DWORD TH32CS_SNAPTHREAD_     = 0x00000004u;
+inline constexpr DWORD CREATE_WAITABLE_TIMER_HIGH_RESOLUTION_ = 0x00000002u;
+inline constexpr DWORD TIMER_ALL_ACCESS_      = 0x001F0003u;
+
 // ── ntdll ───────────────────────────────────────────────────────────────────
 //
 // The object-manager entry points. Their STRUCTURES are declared in win.h and
 // have been since this package was written, for the reason recorded there;
 // these are the calls that take them.
 OKW_IMPORT DWORD OKW_API RtlNtStatusToDosError(long);
+// The program that started this one, for a grant's variable (0.23): the record
+// this system keeps of a process, whose sixth word is its parent's identifier.
+OKW_IMPORT long  OKW_API NtQueryInformationProcess(HANDLE, int, LPVOID, ULONG, ULONG*);
 
 }  // extern "C"
+
+// ── reached at run time: what a system of a given version has ───────────────
+//
+// THE PLACEHOLDERS OF A RESERVATION (Windows 10 1803), the enquiry by name
+// (1709), the gathering of a range's pages (8) and a program's memory priority
+// (8) are in this system's newer libraries. Taken from the library at the first
+// use, so that a program built here starts on a system without them; where a
+// name is absent, the position it would answer is not claimed.
+using pfn_VirtualAlloc2_ = LPVOID (OKW_API*)(HANDLE, LPVOID, unsigned long long, ULONG, ULONG, void*, ULONG);
+using pfn_MapViewOfFile3_ = LPVOID (OKW_API*)(HANDLE, HANDLE, LPVOID, unsigned long long, unsigned long long,
+                                              ULONG, ULONG, void*, ULONG);
+using pfn_UnmapViewOfFile2_ = BOOL (OKW_API*)(HANDLE, LPVOID, ULONG);
+using pfn_VirtualFreeEx_ = BOOL (OKW_API*)(HANDLE, LPVOID, unsigned long long, DWORD);
+struct WIN32_MEMORY_RANGE_ENTRY_ { LPVOID VirtualAddress; unsigned long long NumberOfBytes; };
+using pfn_PrefetchVirtualMemory_ = BOOL (OKW_API*)(HANDLE, unsigned long long, WIN32_MEMORY_RANGE_ENTRY_*, ULONG);
+using pfn_SetProcessInformation_ = BOOL (OKW_API*)(HANDLE, int, LPVOID, DWORD);
+using pfn_NtQueryInformationByName_ = long (OKW_API*)(void* attributes, void* status, void* info, ULONG length, int cls);
+// Constants and not enumerators: each is combined with this file's older
+// constants, and two enumerations are not combined.
+inline constexpr DWORD MEM_RESERVE_PLACEHOLDER_  = 0x00040000u;
+inline constexpr DWORD MEM_REPLACE_PLACEHOLDER_  = 0x00004000u;
+inline constexpr DWORD MEM_PRESERVE_PLACEHOLDER_ = 0x00000002u;
 
 // ── ws2_32: this system's network interface ─────────────────────────────────
 //

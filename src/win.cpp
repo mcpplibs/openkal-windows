@@ -27,6 +27,13 @@ namespace okw {
 
 okw_uptr length(const char* s) { okw_uptr n = 0; while (s && s[n]) ++n; return n; }
 
+// Both libraries are mapped into every program of this system before its first
+// instruction, so loading one by name only finds it.
+void* system_function(const wchar_t* library, const char* name) {
+    HANDLE lib = LoadLibraryW(library);
+    return lib ? GetProcAddress(lib, name) : nullptr;
+}
+
 int translate_win32(unsigned long e) {
     switch (e) {
         case ERROR_SUCCESS:                 return kal_ok;

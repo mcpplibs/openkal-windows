@@ -1,4 +1,5 @@
 #include "win.h"
+#include "rights.h"
 #include <openkal/abort.h>
 
 extern "C" {
@@ -34,6 +35,9 @@ extern "C" {
 // notifies every loaded module before the process ends, and a module's
 // notification is code the caller did not ask to run.
 [[noreturn]] void kal_exit(int code) {
+    // What the program's attenuated handles recorded is written, and ended
+    // (0.23, fs.h).
+    okw::rights::end_of_program();
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     for (;;) { }
 }

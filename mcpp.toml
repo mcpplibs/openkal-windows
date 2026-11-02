@@ -29,7 +29,7 @@ repo        = "https://github.com/mcpplibs/openkal-windows"
 # the first of the three times clause 6.2 tabulates, and the earliest at which
 # the question can be answered.
 #
-# FOURTEEN AND NOT FIFTEEN. `openkal.space` is absent: this environment has no
+# EVERY ONE BUT ONE. `openkal.space` is absent: this environment has no
 # operation upon an address space it can supply, and clause 3 says an
 # implementation provides an interface in whole or not at all. A consumer that
 # needs it is refused here and builds on openkal-linux, which is the whole
@@ -61,6 +61,8 @@ provides-interfaces = [
     "openkal.timeout",
     "openkal.map",
     "openkal.region",
+    "openkal.prof",
+    "openkal.debug",
 ]
 
 [dependencies]

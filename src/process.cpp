@@ -1,5 +1,7 @@
 #include "win.h"
 #include "handle.h"
+#include "rights.h"
+#include <openkal/env.h>
 #include <openkal/process.h>
 #include <openkal/memory.h>
 
@@ -73,6 +75,9 @@ okw_uptr plain_name(wchar_t* s, okw_uptr n) {
 // call.
 SRWLOCK_ g_starting{};
 
+// The granted directories and the records of recorded ones (0.23).
+constexpr kal_uintptr kMaxGrants = 16;
+
 struct inheritance {
     HANDLE handle[3]{};
     DWORD  before[3]{};
@@ -81,9 +86,13 @@ struct inheritance {
     // The handles this start actually places, deduplicated: what goes into
     // PROC_THREAD_ATTRIBUTE_HANDLE_LIST. The system refuses a list holding one
     // handle twice, which stdout and stderr placed upon the same pipe would
-    // otherwise be.
-    HANDLE list[3]{};
+    // otherwise be. After the streams, the duplicates a start makes for its
+    // grants and their records, which are made inheritable when they are made
+    // and released after the start (`granting').
+    HANDLE list[3 + 2 * kMaxGrants]{};
     DWORD  count = 0;
+
+    void include(HANDLE h) { if (count < sizeof list / sizeof list[0]) list[count++] = h; }
 
     inheritance(bool active, HANDLE in, HANDLE out, HANDLE err) {
         if (!active) return;
@@ -369,20 +378,208 @@ bool entries_well_formed(const char** envp, const kal_uintptr* lens, kal_uintptr
     return true;
 }
 
+// --- what a start conveys beside its arguments (0.23) -------------------------
+//
+// THE GRANTS. This system has no numbering a preopen could arrive under, and
+// needs none: a handle a program inherits has the value it had in the program
+// that started it. So each grant is a duplicate of the caller's handle, made
+// inheritable for this start and named in its explicit list, and the started
+// program learns the values and the names from one variable,
+//
+//     KAL_PREOPENS=<pid>{;<handle>,<len>,<name>}
+//
+// and what each carries (rights.h) from a second,
+//
+//     KAL_GRANT_RIGHTS=<pid>{;<index>,<flags>,<record handle or -1>,<len>,<path>}
+//
+// where `<pid>' is this program: the started program reads them only when the
+// program that started it is that one (fs.cpp), so a value that reaches a
+// program through one that did not read it --- a shell --- names no one. The
+// arrangement is the other two systems', with the starter's number in place of
+// the started program's, which this system gives only once the program exists.
+// THE PREFERENCE travels as KAL_RESOURCES, read by env.cpp.
+bool named(const char* s, okw_uptr n, const char* key) {
+    okw_uptr k = 0;
+    for (; key[k]; ++k) {
+        if (k >= n) return false;
+        char a = s[k];
+        if (a >= 'a' && a <= 'z') a = static_cast<char>(a - 32);
+        if (a != key[k]) return false;
+    }
+    return k < n && s[k] == '=';
+}
+bool named(const wchar_t* s, okw_uptr n, const char* key) {
+    okw_uptr k = 0;
+    for (; key[k]; ++k) {
+        if (k >= n) return false;
+        wchar_t a = s[k];
+        if (a >= L'a' && a <= L'z') a = static_cast<wchar_t>(a - 32);
+        if (a != static_cast<wchar_t>(key[k])) return false;
+    }
+    return k < n && s[k] == L'=';
+}
+template <class C>
+bool conveyed_here(const C* s, okw_uptr n) {
+    return named(s, n, "KAL_PREOPENS") || named(s, n, "KAL_GRANT_RIGHTS") || named(s, n, "KAL_RESOURCES");
+}
+
+char* put_decimal(char* o, unsigned long long v) {
+    char b[24]; int i = 0;
+    do { b[i++] = static_cast<char>('0' + v % 10); v /= 10; } while (v);
+    while (i) *o++ = b[--i];
+    return o;
+}
+
+struct granting {
+    HANDLE   dup[kMaxGrants]{};
+    HANDLE   rec[kMaxGrants]{};
+    kal_uintptr count = 0;
+    const kal_preopen* grants = nullptr;
+    char     rights[8192];
+    okw_uptr rights_len = 0;
+
+    int make(const kal_preopen* g, kal_uintptr n, inheritance& window) {
+        grants = g;
+        const HANDLE self = GetCurrentProcess();
+        for (kal_uintptr i = 0; i < n; ++i) {
+            void* src = okw::unpack(g[i].dir.h);
+            if (!DuplicateHandle(self, src, self, &dup[i], 0, TRUE, DUPLICATE_SAME_ACCESS))
+                return okw::translate_win32(GetLastError());
+            count = i + 1;
+            window.include(dup[i]);
+            okw_u32 flags = 0; void* record = nullptr; const char* prefix = ""; okw_uptr plen = 0;
+            if (!okw::rights::conveyed(src, &flags, &record, &prefix, &plen)) continue;
+            if (record != nullptr) {
+                if (!DuplicateHandle(self, record, self, &rec[i], 0, TRUE, DUPLICATE_SAME_ACCESS))
+                    return okw::translate_win32(GetLastError());
+                window.include(rec[i]);
+            }
+            char head[96];
+            char* o = head;
+            *o++ = ';'; o = put_decimal(o, i);
+            *o++ = ','; o = put_decimal(o, flags);
+            *o++ = ',';
+            if (rec[i] == nullptr) { *o++ = '-'; *o++ = '1'; }
+            else o = put_decimal(o, reinterpret_cast<okw_uptr>(rec[i]));
+            *o++ = ','; o = put_decimal(o, plen);
+            *o++ = ',';
+            const okw_uptr hn = static_cast<okw_uptr>(o - head);
+            if (rights_len + hn + plen >= sizeof rights) return kal_err_invalid;
+            for (okw_uptr k = 0; k < hn; ++k) rights[rights_len++] = head[k];
+            for (okw_uptr k = 0; k < plen; ++k) rights[rights_len++] = prefix[k];
+        }
+        return kal_ok;
+    }
+    ~granting() {
+        for (kal_uintptr i = 0; i < count; ++i) {
+            if (dup[i]) CloseHandle(dup[i]);
+            if (rec[i]) CloseHandle(rec[i]);
+        }
+    }
+};
+
+// The block of named values a start passes, made of the caller's entries ---
+// or this program's own where the caller gave none --- less any of the names
+// a start conveys, and this start's.
+struct environment {
+    wchar_t* w = nullptr;
+    okw_uptr cap = 0, at = 0;
+    char*    extra = nullptr;
+    okw_uptr extra_cap = 0, extra_len = 0;
+
+    ~environment() {
+        if (w) kal_free(w, cap * sizeof(wchar_t), alignof(wchar_t));
+        if (extra) kal_free(extra, extra_cap, 1);
+    }
+
+    bool put_utf8(const char* s, okw_uptr n) {
+        if (n == 0) return true;
+        const int produced = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, static_cast<int>(n),
+                                                 w + at, static_cast<int>(cap - at - 2));
+        if (produced <= 0) return false;
+        at += static_cast<okw_uptr>(produced);
+        w[at++] = 0;
+        return true;
+    }
+
+    int build(const char** envp, const kal_uintptr* lens, kal_uintptr envc, const granting* g,
+              const char* resources) {
+        // This start's own, first, as text of the caller's encoding.
+        okw_uptr need = 64;
+        if (g) {
+            need += 32;
+            for (kal_uintptr i = 0; i < g->count; ++i) need += 48 + g->grants[i].len;
+            need += 48 + g->rights_len;
+        }
+        extra_cap = need;
+        extra = static_cast<char*>(kal_alloc(extra_cap, 1));
+        if (!extra) return kal_err_no_memory;
+        const unsigned long long pid = GetCurrentProcessId();
+        char* o = extra;
+        auto text = [&](const char* t) { while (*t) *o++ = *t++; };
+        if (g) {
+            text("KAL_PREOPENS="); o = put_decimal(o, pid);
+            for (kal_uintptr i = 0; i < g->count; ++i) {
+                *o++ = ';'; o = put_decimal(o, reinterpret_cast<okw_uptr>(g->dup[i]));
+                *o++ = ','; o = put_decimal(o, g->grants[i].len);
+                *o++ = ',';
+                for (kal_uintptr k = 0; k < g->grants[i].len; ++k) *o++ = g->grants[i].name[k];
+            }
+            *o++ = '\0';
+            if (g->rights_len) {
+                text("KAL_GRANT_RIGHTS="); o = put_decimal(o, pid);
+                for (okw_uptr k = 0; k < g->rights_len; ++k) *o++ = g->rights[k];
+                *o++ = '\0';
+            }
+        }
+        if (resources) { text("KAL_RESOURCES="); text(resources); *o++ = '\0'; }
+        extra_len = static_cast<okw_uptr>(o - extra);
+
+        // The rest, measured: no unit of this system's encoding is made of
+        // fewer than one byte of the caller's.
+        wchar_t* own = envc == 0 ? GetEnvironmentStringsW() : nullptr;
+        okw_uptr total = extra_len + 2;
+        if (envc > 0) for (kal_uintptr i = 0; i < envc; ++i) total += lens[i] + 1;
+        else if (own) { const wchar_t* p = own; while (*p) { while (*p) { ++p; ++total; } ++p; ++total; } }
+        cap = total;
+        w = static_cast<wchar_t*>(kal_alloc(cap * sizeof(wchar_t), alignof(wchar_t)));
+        if (!w) { if (own) FreeEnvironmentStringsW(own); return kal_err_no_memory; }
+        bool ok = true;
+        if (envc > 0) {
+            for (kal_uintptr i = 0; i < envc && ok; ++i)
+                if (!conveyed_here(envp[i], lens[i])) ok = put_utf8(envp[i], lens[i]);
+        } else if (own) {
+            for (const wchar_t* p = own; *p;) {
+                okw_uptr n = 0;
+                while (p[n]) ++n;
+                if (!conveyed_here(p, n)) { for (okw_uptr k = 0; k <= n; ++k) w[at++] = p[k]; }
+                p += n + 1;
+            }
+            FreeEnvironmentStringsW(own);
+        }
+        for (const char* e = extra; ok && e < extra + extra_len;) {
+            const okw_uptr n = okw::length(e);
+            ok = put_utf8(e, n);
+            e += n + 1;
+        }
+        if (!ok) return kal_err_invalid;
+        // An empty block is one terminator before the last.
+        if (at == 0) w[at++] = 0;
+        w[at++] = 0;
+        return kal_ok;
+    }
+};
+
 }  // namespace
 
 extern "C" {
 
 // Starting a program. One function since openkal 0.11.
 //
-// TWO POSITIONS IN `kal_spawn' ARE REFUSED HERE, AND EACH REFUSAL
-// IS OLDER THAN 0.11 --- the record moved, the answers did not.
-//
-// `grants': this environment has no numbering a preopen could arrive under, so
-// there is no correspondence to descriptor three. KAL_PROCESS_PROP_GRANT_DIR is
-// not claimed. A count of zero asks for a program with no preopens, which is
-// what a program here gets anyway, so that request IS answerable and is
-// answered.
+// `grants' WAS REFUSED HERE UNTIL 0.19.0 (openkal 0.23), on the ground that this
+// environment has no numbering a preopen could arrive under. It needs none: an
+// inherited handle keeps its value, and the value travels with the name
+// (`granting' above). A count of zero starts a program with no preopens.
 //
 // `KAL_SPAWN_BOUND_LIFETIME' WAS REFUSED HERE UNTIL 0.13, on the ground that no
 // primitive arms it from inside the started image. None needs to: a job that
@@ -427,9 +624,26 @@ int kal_process_spawn(const kal_spawn* how,
     void* run = okw::unpack(how->work.h);
     if (!dir || !run) return kal_err_invalid;
     if (!okw::acceptable(path, path_len)) return kal_err_invalid;
-    if (how->grant_count > 0) return kal_err_not_supported;
     constexpr kal_uintptr nulls = KAL_SPAWN_NULL_IN | KAL_SPAWN_NULL_OUT | KAL_SPAWN_NULL_ERR;
-    if ((how->flags & ~(KAL_SPAWN_BOUND_LIFETIME | KAL_SPAWN_ONE_STRING | nulls)) != 0) return kal_err_not_supported;
+    constexpr kal_uintptr preferences = KAL_SPAWN_RESOURCES_BALANCED | KAL_SPAWN_RESOURCES_PERFORMANCE
+                                      | KAL_SPAWN_RESOURCES_ECONOMY;
+    // KAL_SPAWN_CONFINE is not among them: this system holds a program to
+    // directories only by changing who may reach them for everyone (a
+    // security descriptor of each file), which a start does not get to do.
+    if ((how->flags & ~(KAL_SPAWN_BOUND_LIFETIME | KAL_SPAWN_ONE_STRING | nulls | preferences)) != 0)
+        return kal_err_not_supported;
+    const kal_uintptr preference = how->flags & preferences;
+    if (preference & (preference - 1)) return kal_err_invalid;
+    // THE GRANTS (0.23): each a directory this program holds, and a name that
+    // travels in a variable, which cannot carry a zero.
+    if (how->grants == nullptr && how->grant_count != 0) return kal_err_invalid;
+    if (how->grant_count > kMaxGrants) return kal_err_invalid;
+    for (kal_uintptr i = 0; i < how->grant_count; ++i) {
+        const kal_preopen& g = how->grants[i];
+        if (!okw::unpack(g.dir.h)) return kal_err_invalid;
+        if (g.len >= okw::kMaxName || (g.len > 0 && g.name == nullptr)) return kal_err_invalid;
+        for (kal_uintptr c = 0; c < g.len; ++c) if (g.name[c] == '\0') return kal_err_invalid;
+    }
     // THE NULL DEVICE BESIDE A STREAM AT ONE POSITION is two answers to one
     // question (openkal 0.22, clause 7.15).
     if (streams != nullptr
@@ -477,7 +691,6 @@ int kal_process_spawn(const kal_spawn* how,
         // beyond what `line' holds had the quoting overwrite what it had not
         // yet read.
         wchar_t one[kCommandLine];
-        wchar_t block[kCommandLine];
     };
     auto* work = static_cast<scratch*>(kal_alloc(sizeof(scratch), alignof(scratch)));
     if (!work) return kal_err_no_memory;
@@ -533,16 +746,20 @@ int kal_process_spawn(const kal_spawn* how,
     line[used] = 0;
     if (argc == 0) line[0] = 0;
 
-    // The named values. An empty set means the started program receives the
-    // caller's, which is what this environment does when none is supplied.
-    wchar_t* block = work->block;
-    okw_uptr block_used = 0;
-    for (kal_uintptr i = 0; i < envc; ++i) {
-        if (!append_utf8(block, kCommandLine, block_used, envp[i], envp_lens[i]))
-            return kal_err_no_space;
-        block[block_used++] = 0;
-    }
-    block[block_used++] = 0;
+    // THE NAMED VALUES. An empty set means the started program receives the
+    // caller's, which is what this environment does when none is supplied ---
+    // unless this start conveys something of its own (0.23: the grants, what
+    // they carry, the preference), and then the block is the caller's, less
+    // any value of those names, and this start's. Made inside the start's
+    // window below, because the grants' handles are made there.
+    const int own_preference = kal_env_resources();
+    const int asked_preference = preference == KAL_SPAWN_RESOURCES_PERFORMANCE ? KAL_RESOURCES_PERFORMANCE
+                               : preference == KAL_SPAWN_RESOURCES_ECONOMY     ? KAL_RESOURCES_ECONOMY
+                               : preference == KAL_SPAWN_RESOURCES_BALANCED    ? KAL_RESOURCES_BALANCED
+                                                                               : own_preference;
+    const char* resources = asked_preference == KAL_RESOURCES_PERFORMANCE ? "performance"
+                          : asked_preference == KAL_RESOURCES_ECONOMY     ? "economy"
+                          : preference != 0                               ? "balanced" : nullptr;
 
     // THE NULL DEVICE (openkal 0.22): this system's `NUL', opened for this
     // start and released after it; the started program holds its own handle.
@@ -563,7 +780,10 @@ int kal_process_spawn(const kal_spawn* how,
     STARTUPINFOW& startup = ex.startup;
     startup.cb = sizeof(STARTUPINFOW);
     bool inherit = false;
-    if (null_at != 0 || (streams && (streams->in.h || streams->out.h || streams->err.h))) {
+    const bool grants = how->grants != nullptr;
+    // A start that grants places the streams as one that is given them does:
+    // what it places is named in the list, and nothing else crosses.
+    if (grants || null_at != 0 || (streams && (streams->in.h || streams->out.h || streams->err.h))) {
         auto placed = [&](kal_uintptr flag, kal_uintptr stream, DWORD standard) -> HANDLE {
             if (null_at & flag) return device.h;
             return stream ? reinterpret_cast<void*>(stream) : GetStdHandle(standard);
@@ -578,8 +798,21 @@ int kal_process_spawn(const kal_spawn* how,
     PROCESS_INFORMATION info{};
     BOOL  started = FALSE;
     DWORD refusal = 0;
+    int   failed = kal_ok;
     {
         inheritance window(inherit, startup.hStdInput, startup.hStdOutput, startup.hStdError);
+
+        // THE GRANTS AND THEIR RECORDS, as duplicates made inheritable for this
+        // start: the started program receives each at the value it has here,
+        // and its name and what it carries in the variables below.
+        granting given;
+        environment block;
+        if (grants || resources != nullptr) {
+            failed = given.make(how->grants, how->grant_count, window);
+            if (failed == kal_ok) failed = block.build(envp, envp_lens, envc, grants ? &given : nullptr, resources);
+        } else if (envc > 0) {
+            failed = block.build(envp, envp_lens, envc, nullptr, nullptr);
+        }
 
         // ONLY THE HANDLES `window' NAMED ARE ASKED TO CROSS. Without an
         // explicit list, bInheritHandles=TRUE would still hand the started
@@ -598,13 +831,23 @@ int kal_process_spawn(const kal_spawn* how,
             inherit_handles = TRUE;
         }
 
-        started = CreateProcessW(image, argc ? line : nullptr, nullptr, nullptr,
-                                 inherit_handles, creation,
-                                 envc ? block : nullptr, cwd, &startup, &info);
-        // Read before the handles are put back, which may set it again.
-        if (!started) refusal = GetLastError();
+        if (failed == kal_ok) {
+            started = CreateProcessW(image, argc ? line : nullptr, nullptr, nullptr,
+                                     inherit_handles, creation,
+                                     block.w, cwd, &startup, &info);
+            // Read before the handles are put back, which may set it again.
+            if (!started) refusal = GetLastError();
+        }
     }
+    if (failed != kal_ok) return failed;
     if (!started) return okw::translate_win32(refusal);
+
+    // ECONOMY (0.23): the started program's pages are the first this system
+    // takes back when memory is short. Set by the starter, so that a program
+    // of this system's own --- one that does not read the preference --- is
+    // held to it as well; a program of this implementation also sets it on
+    // itself where it was started otherwise (env.cpp).
+    if (asked_preference == KAL_RESOURCES_ECONOMY) okw::lower_memory_priority(info.hProcess);
 
     // ASSIGNED BEFORE THE CALLER IS TOLD ANYTHING. A program that could not be
     // put into the unit is not the program that was asked for --- it would outlive
@@ -695,16 +938,26 @@ int kal_process_info(kal_process p, kal_u32 wanted, kal_program_info* out) {
     }
     // MEMORY (openkal 0.20): the commit charge now and at most; the process
     // object keeps both after the program ends, while the handle is held.
+    // PAGE FAULTS (0.23): this system counts them as one number, which is
+    // `faults_minor' with KAL_PINFO_MAJOR absent. Each is written where the
+    // caller's structure reaches it.
+    constexpr kal_u32 memory_end = 56, faults_end = 72;
     PROCESS_MEMORY_COUNTERS_EX_ m{};
     m.cb = sizeof m;
+    const bool counted = (wanted & (KAL_PINFO_MEMORY | KAL_PINFO_FAULTS)) && self >= memory_end
+        && K32GetProcessMemoryInfo(kind_of(p) == kind_self ? GetCurrentProcess() : h, &m, sizeof m);
     // An ended program whose counters read zero has no record of them left
     // (wine keeps none), which is not a peak of zero: nothing is reported.
-    if ((wanted & KAL_PINFO_MEMORY) && self >= sizeof v
-        && K32GetProcessMemoryInfo(kind_of(p) == kind_self ? GetCurrentProcess() : h, &m, sizeof m)
-        && (!v.ended || m.PeakPagefileUsage != 0)) {
+    if (counted && (wanted & KAL_PINFO_MEMORY) && (!v.ended || m.PeakPagefileUsage != 0)) {
         v.memory_bytes = v.ended ? 0 : m.PagefileUsage;
         v.memory_peak_bytes = m.PeakPagefileUsage > m.PagefileUsage ? m.PeakPagefileUsage : m.PagefileUsage;
         v.present |= KAL_PINFO_MEMORY;
+    }
+    // A count of zero is no count: every program has taken a fault by the time
+    // it can ask, and an emulator of this system that keeps none answers zero.
+    if (counted && (wanted & KAL_PINFO_FAULTS) && self >= faults_end && m.PageFaultCount != 0) {
+        v.faults_minor = m.PageFaultCount;
+        v.present |= KAL_PINFO_FAULTS;
     }
     const kal_u32 n = self < sizeof v ? self : static_cast<kal_u32>(sizeof v);
     auto* d = reinterpret_cast<unsigned char*>(out);
@@ -936,6 +1189,21 @@ void kal_process_channel_close(kal_stream s) {
 }
 
 
+// THE NUMBERS THIS SYSTEM GIVES A PROGRAM IT ENDED (0.23): the status of a
+// fault no handler took --- an access, an instruction, an exhausted stack, a
+// failure the program asked to be ended for --- which is an error of the
+// system's own facility (0xC000xxxx), or the two warnings a fault can end a
+// program with; the number this implementation gives one it terminates; and
+// the console's interrupt. Until 0.19.0 only the fail-fast status was among
+// the first, and a program that faulted was reported to have returned a
+// number.
+namespace {
+bool ended_by_the_system(DWORD code) {
+    return (code & 0xFFFF0000u) == 0xC0000000u || code == 0x80000002u /* misalignment */
+        || code == 0x80000003u /* a breakpoint */ || code == 0xFFFFFFFFu || code == STATUS_CONTROL_C_EXIT_;
+}
+}  // namespace
+
 int kal_process_wait(kal_process p, int* status, int* terminated) {
     if (kind_of(p) == kind_self) return kal_err_invalid;
     if (kind_of(p) == kind_opened) return kal_err_not_supported;
@@ -957,7 +1225,7 @@ int kal_process_wait(kal_process p, int* status, int* terminated) {
     if (code == kLimitCode || ended_by_limit(h)) {
         if (status)     *status = static_cast<int>(code & 0x7fffffff);
         if (terminated) *terminated = KAL_TERMINATED_LIMIT;
-    } else if (code == 0xC0000409u || code == 0xFFFFFFFFu || code == STATUS_CONTROL_C_EXIT_) {
+    } else if (ended_by_the_system(code)) {
         if (status)     *status = static_cast<int>(code & 0x7fffffff);
         if (terminated) *terminated = 1;
     } else {
@@ -1007,9 +1275,10 @@ void kal_process_close(kal_process p) {
 // claiming a facility the operation then declines is the disagreement clause
 // 6.2 exists to prevent, so the two are written together and read together:
 //
-//   GRANT_DIR       kal_process_spawn refuses a non-empty `grants'
+//   CONFINE         kal_process_spawn refuses KAL_SPAWN_CONFINE (0.23)
 //
-// BOUND_LIFETIME and STOP_REQUESTED were absent until 0.13 (K5, K3).
+// BOUND_LIFETIME and STOP_REQUESTED were absent until 0.13 (K5, K3); GRANT_DIR
+// until 0.19.0 (openkal 0.23), which conveys a grant as an inherited handle.
 kal_uintptr kal_process_props(void) { return
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
   | KAL_PROCESS_PROP_EXIT_STATUS
@@ -1020,6 +1289,7 @@ kal_uintptr kal_process_props(void) { return
   | KAL_PROCESS_PROP_STOP_REQUESTED    // K3: the routine handles, and the word is read
   | KAL_PROCESS_PROP_OPEN_ID
   | KAL_PROCESS_PROP_ONE_STRING     // 0.17.1: a program here receives one string
-  | KAL_PROCESS_PROP_NULL_STREAMS; } // 0.22: `NUL' at a position
+  | KAL_PROCESS_PROP_NULL_STREAMS    // 0.22: `NUL' at a position
+  | KAL_PROCESS_PROP_GRANT_DIR; }    // 0.23: a grant is an inherited handle
 
 }

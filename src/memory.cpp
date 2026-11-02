@@ -81,4 +81,46 @@ kal_uintptr kal_memory_granularity(void) {
     return page > grain ? page : grain;
 }
 
+// WHAT THIS PROGRAM MAY USE, AND WHAT IT CAN BE GIVEN NOW (0.23): the machine's
+// memory and what is free of it (GlobalMemoryStatusEx), each no more than a
+// limit on the program, or on the job it is in, leaves.
+int kal_memory_info(kal_memory_status* out) {
+    if (out == nullptr || out->self_size < sizeof(kal_u32) * 2) return kal_err_invalid;
+    kal_memory_status v{};
+    v.self_size = out->self_size;
+    MEMORYSTATUSEX_ m{};
+    m.dwLength = sizeof m;
+    if (GlobalMemoryStatusEx(&m)) {
+        v.total_bytes = m.ullTotalPhys;
+        v.available_bytes = m.ullAvailPhys;
+        v.present = KAL_MSTATUS_TOTAL | KAL_MSTATUS_AVAILABLE;
+        JOB_LIMITS l{};
+        if (QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation_, &l, sizeof l, nullptr)) {
+            constexpr DWORD process_memory = 0x100u;   // JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            auto bound = [&](unsigned long long limit, unsigned long long used) {
+                if (limit == 0) return;
+                if (limit < v.total_bytes) v.total_bytes = limit;
+                const unsigned long long left = limit > used ? limit - used : 0;
+                if (left < v.available_bytes) v.available_bytes = left;
+            };
+            if (l.LimitFlags & process_memory) {
+                PROCESS_MEMORY_COUNTERS_EX_ c{};
+                c.cb = sizeof c;
+                K32GetProcessMemoryInfo(GetCurrentProcess(), &c, sizeof c);
+                bound(l.ProcessMemoryLimit, c.PagefileUsage);
+            }
+            if (l.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY_) {
+                JOB_VIOLATION_ j{};
+                QueryInformationJobObject(nullptr, JobObjectLimitViolationInformation_, &j, sizeof j, nullptr);
+                bound(l.JobMemoryLimit, j.JobMemory);
+            }
+        }
+    }
+    const kal_u32 n = out->self_size < sizeof v ? out->self_size : static_cast<kal_u32>(sizeof v);
+    auto* d = reinterpret_cast<unsigned char*>(out);
+    const auto* src = reinterpret_cast<const unsigned char*>(&v);
+    for (kal_u32 i = 0; i < n; ++i) d[i] = src[i];
+    return kal_ok;
+}
+
 }
