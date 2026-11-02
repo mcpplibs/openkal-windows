@@ -4,10 +4,10 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.21.0"
+openkal = "0.22.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.17.0"
+openkal-windows = "0.18.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
@@ -141,6 +141,15 @@ limits. That is what it is taken to mean here, and what the conformance suite
 observes is the part a caller depends on rather than the choice between the
 two: the region contains the stack of the thread that asked. It is measured on
 this system's own runner and again under Wine on a Linux one.
+
+## Version 0.18 (openkal 0.22)
+
+**The null device at a position.** `KAL_SPAWN_NULL_IN`, `KAL_SPAWN_NULL_OUT` and
+`KAL_SPAWN_NULL_ERR` place `NUL` at the started program's standard input, output
+or error; `KAL_PROCESS_PROP_NULL_STREAMS` is claimed. The device is opened for the
+start, placed and made inheritable as a caller's stream is, and released after
+it, so the caller holds no handle for it. A flag beside a stream at the same
+position is `kal_err_invalid`. Measured on this system's runner and under Wine.
 
 ## Version 0.17 (openkal 0.21)
 

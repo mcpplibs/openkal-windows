@@ -428,7 +428,15 @@ int kal_process_spawn(const kal_spawn* how,
     if (!dir || !run) return kal_err_invalid;
     if (!okw::acceptable(path, path_len)) return kal_err_invalid;
     if (how->grant_count > 0) return kal_err_not_supported;
-    if ((how->flags & ~(KAL_SPAWN_BOUND_LIFETIME | KAL_SPAWN_ONE_STRING)) != 0) return kal_err_not_supported;
+    constexpr kal_uintptr nulls = KAL_SPAWN_NULL_IN | KAL_SPAWN_NULL_OUT | KAL_SPAWN_NULL_ERR;
+    if ((how->flags & ~(KAL_SPAWN_BOUND_LIFETIME | KAL_SPAWN_ONE_STRING | nulls)) != 0) return kal_err_not_supported;
+    // THE NULL DEVICE BESIDE A STREAM AT ONE POSITION is two answers to one
+    // question (openkal 0.22, clause 7.15).
+    if (streams != nullptr
+        && (((how->flags & KAL_SPAWN_NULL_IN) && streams->in.h != 0)
+            || ((how->flags & KAL_SPAWN_NULL_OUT) && streams->out.h != 0)
+            || ((how->flags & KAL_SPAWN_NULL_ERR) && streams->err.h != 0)))
+        return kal_err_invalid;
     // Clause 7.6, 0.17.1: the elements after the first joined as they are.
     const bool one_string = (how->flags & KAL_SPAWN_ONE_STRING) != 0;
     if (envc > 0 && (envp == nullptr || envp_lens == nullptr)) return kal_err_invalid;
@@ -536,18 +544,34 @@ int kal_process_spawn(const kal_spawn* how,
     }
     block[block_used++] = 0;
 
+    // THE NULL DEVICE (openkal 0.22): this system's `NUL', opened for this
+    // start and released after it; the started program holds its own handle.
+    // It is placed and made inheritable as a caller's stream is, through
+    // `inheritance' below.
+    struct device_guard {
+        HANDLE h = INVALID_HANDLE_VALUE;
+        ~device_guard() { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); }
+    } device;
+    const kal_uintptr null_at = how->flags & nulls;
+    if (null_at != 0) {
+        device.h = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               nullptr, OPEN_EXISTING, 0, nullptr);
+        if (device.h == INVALID_HANDLE_VALUE) return okw::translate_win32(GetLastError());
+    }
+
     STARTUPINFOEXW ex{};
     STARTUPINFOW& startup = ex.startup;
     startup.cb = sizeof(STARTUPINFOW);
     bool inherit = false;
-    if (streams && (streams->in.h || streams->out.h || streams->err.h)) {
+    if (null_at != 0 || (streams && (streams->in.h || streams->out.h || streams->err.h))) {
+        auto placed = [&](kal_uintptr flag, kal_uintptr stream, DWORD standard) -> HANDLE {
+            if (null_at & flag) return device.h;
+            return stream ? reinterpret_cast<void*>(stream) : GetStdHandle(standard);
+        };
         startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput  = streams->in.h  ? reinterpret_cast<void*>(streams->in.h)
-                                            : GetStdHandle(STD_INPUT_HANDLE);
-        startup.hStdOutput = streams->out.h ? reinterpret_cast<void*>(streams->out.h)
-                                            : GetStdHandle(STD_OUTPUT_HANDLE);
-        startup.hStdError  = streams->err.h ? reinterpret_cast<void*>(streams->err.h)
-                                            : GetStdHandle(STD_ERROR_HANDLE);
+        startup.hStdInput  = placed(KAL_SPAWN_NULL_IN,  streams ? streams->in.h  : 0, STD_INPUT_HANDLE);
+        startup.hStdOutput = placed(KAL_SPAWN_NULL_OUT, streams ? streams->out.h : 0, STD_OUTPUT_HANDLE);
+        startup.hStdError  = placed(KAL_SPAWN_NULL_ERR, streams ? streams->err.h : 0, STD_ERROR_HANDLE);
         inherit = true;
     }
 
@@ -995,6 +1019,7 @@ kal_uintptr kal_process_props(void) { return
   | KAL_PROCESS_PROP_BOUND_LIFETIME    // K5: a job that ends with this program
   | KAL_PROCESS_PROP_STOP_REQUESTED    // K3: the routine handles, and the word is read
   | KAL_PROCESS_PROP_OPEN_ID
-  | KAL_PROCESS_PROP_ONE_STRING; }   // 0.17.1: a program here receives one string
+  | KAL_PROCESS_PROP_ONE_STRING     // 0.17.1: a program here receives one string
+  | KAL_PROCESS_PROP_NULL_STREAMS; } // 0.22: `NUL' at a position
 
 }
