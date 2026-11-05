@@ -4,16 +4,24 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.23.0"
+openkal = "0.24.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.19.0"
+openkal-windows = "0.20.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
 drawn against systems that share an ancestry; a third implementation on a system
 that shares none of it is what turns "this interface is not Unix's shape" from a
 claim into an observation.
+
+## Observable process units
+
+The process interface provides the OpenKal 0.24 declared-unit operations.
+Observation retains the original named-job handle and queries its active
+membership. A missing name after every handle is lost reports `unknown`.
+Retirement checks the live continuation identity and requires that no external
+member remains. Closing an observation handle does not terminate the unit.
 
 ## What this environment settles
 
