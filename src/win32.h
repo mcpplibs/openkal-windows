@@ -301,6 +301,7 @@ extern "C" {
 OKW_IMPORT HANDLE OKW_API GetStdHandle(DWORD);
 OKW_IMPORT BOOL   OKW_API CloseHandle(HANDLE);
 OKW_IMPORT DWORD  OKW_API GetLastError(void);
+OKW_IMPORT void   OKW_API SetLastError(DWORD);
 OKW_IMPORT DWORD  OKW_API GetFileType(HANDLE);
 OKW_IMPORT BOOL   OKW_API SetHandleInformation(HANDLE, DWORD, DWORD);
 OKW_IMPORT BOOL   OKW_API GetHandleInformation(HANDLE, DWORD*);
@@ -383,6 +384,7 @@ OKW_IMPORT void OKW_API DeleteProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LI
 // does not end, because where a unit is a process group closing is releasing a
 // number. Not declaring the call is how that stays true by construction.
 OKW_IMPORT HANDLE OKW_API CreateJobObjectW(SECURITY_ATTRIBUTES*, LPCWSTR);
+OKW_IMPORT HANDLE OKW_API OpenJobObjectW(DWORD, BOOL, LPCWSTR);
 OKW_IMPORT BOOL   OKW_API AssignProcessToJobObject(HANDLE, HANDLE);
 OKW_IMPORT BOOL   OKW_API TerminateJobObject(HANDLE, UINT);
 

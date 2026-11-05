@@ -4,6 +4,7 @@
 #include <openkal/env.h>
 #include <openkal/process.h>
 #include <openkal/memory.h>
+#include <openkal/random.h>
 
 // A program image that has been started.
 //
@@ -20,6 +21,7 @@
 // to construct it out of nothing.
 
 namespace {
+bool observable_units();
 
 
 constexpr okw_uptr kCommandLine = 32768;   // this environment's own bound
@@ -1279,7 +1281,7 @@ void kal_process_close(kal_process p) {
 //
 // BOUND_LIFETIME and STOP_REQUESTED were absent until 0.13 (K5, K3); GRANT_DIR
 // until 0.19.0 (openkal 0.23), which conveys a grant as an inherited handle.
-kal_uintptr kal_process_props(void) { return
+kal_uintptr kal_process_props(void) { return (observable_units() ? KAL_PROCESS_PROP_JOB_OBSERVE : 0u) |
     KAL_PROCESS_PROP_TERMINATE | KAL_PROCESS_PROP_STREAM_PASSING
   | KAL_PROCESS_PROP_EXIT_STATUS
   | KAL_PROCESS_PROP_CHANNEL
@@ -1292,4 +1294,106 @@ kal_uintptr kal_process_props(void) { return
   | KAL_PROCESS_PROP_NULL_STREAMS    // 0.22: `NUL' at a position
   | KAL_PROCESS_PROP_GRANT_DIR; }    // 0.23: a grant is an inherited handle
 
+}
+
+// Observable units (openkal 0.24): original native job handles, not a registry.
+#include "unit_reference.h"
+namespace {
+using compare_objects_fn = BOOL (OKW_API*)(HANDLE,HANDLE);
+compare_objects_fn unit_compare() {
+    return reinterpret_cast<compare_objects_fn>(okw::system_function(L"kernelbase.dll","CompareObjectHandles"));
+}
+bool observable_units() { return unit_compare() != nullptr; }
+struct unit_identity {
+    kal_u64 owner = 0, birth = 0; char name[96]{};
+};
+bool unit_birth(kal_u64& birth) {
+    FILETIME created{}, ended{}, kernel{}, user{};
+    if (!GetProcessTimes(GetCurrentProcess(),&created,&ended,&kernel,&user)) return false;
+    birth = (static_cast<kal_u64>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+    return birth != 0;
+}
+bool unit_parse(const char* p, kal_uintptr n, unit_identity& u) {
+    if (!p || n == 0 || n > 256) return false;
+    unit_reference::reader r{p,n}; char kind[8]{};
+    if (!r.token(kind,sizeof kind) || !unit_reference::same(kind,"W1")
+        || !r.number(u.owner) || !u.owner || !r.number(u.birth) || !u.birth
+        || !r.token(u.name,sizeof u.name) || r.at != n) return false;
+    static const char prefix[] = "Local\\openkal-unit-";
+    for (kal_uintptr i = 0; i < sizeof prefix - 1; ++i) if (u.name[i] != prefix[i]) return false;
+    kal_uintptr at = sizeof prefix - 1;
+    for (kal_uintptr i = 0; i < 32; ++i) {
+        const char c = u.name[at + i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    }
+    return u.name[at + 32] == 0;
+}
+HANDLE unit_open(const unit_identity& u) {
+    wchar_t name[96]{};
+    for (kal_uintptr i = 0; u.name[i]; ++i) name[i] = static_cast<unsigned char>(u.name[i]);
+    return OpenJobObjectW(4 /* JOB_OBJECT_QUERY */,FALSE,name);
+}
+bool unit_matches(HANDLE original, const unit_identity& u) {
+    const auto compare = unit_compare(); if (!compare) return false;
+    HANDLE named = unit_open(u); if (!named) return false;
+    const bool same = compare(original,named) != FALSE; CloseHandle(named); return same;
+}
+}
+extern "C" {
+int kal_process_job_create(kal_job* out, char* reference, kal_uintptr capacity, kal_uintptr* used) {
+    if (!out || !reference || !used) return kal_err_invalid;
+    if (capacity < 256) return kal_err_no_space;
+    if (!unit_compare()) return kal_err_not_supported;
+    unit_identity u; u.owner = GetCurrentProcessId();
+    if (!unit_birth(u.birth)) return kal_err_not_supported;
+    unsigned char random[16]{};
+    const int random_rc = kal_random_fill(random,sizeof random); if (random_rc != kal_ok) return random_rc;
+    static const char prefix[] = "Local\\openkal-unit-", hex[] = "0123456789abcdef";
+    kal_uintptr at = 0;
+    for (; at < sizeof prefix - 1; ++at) u.name[at] = prefix[at];
+    for (unsigned i = 0; i < 16; ++i) { u.name[at++] = hex[random[i] >> 4]; u.name[at++] = hex[random[i] & 15]; }
+    wchar_t name[96]{}; for (kal_uintptr i = 0; i < at; ++i) name[i] = u.name[i];
+    SetLastError(0); HANDLE job = CreateJobObjectW(nullptr,name);
+    if (!job) return okw::translate_win32(GetLastError());
+    if (GetLastError() == 183 /* ERROR_ALREADY_EXISTS */) { CloseHandle(job); return kal_err_again; }
+    unit_reference::writer w; w.text("W1;"); w.number(u.owner); w.next(); w.number(u.birth); w.next(); w.text(u.name);
+    if (!w.valid) { CloseHandle(job); return kal_err_no_space; }
+    if (!AssignProcessToJobObject(job,GetCurrentProcess())) { const auto error = GetLastError(); CloseHandle(job); return okw::translate_win32(error); }
+    const auto packed = okw::pack(job);
+    if (!packed) { CloseHandle(job); return kal_err_no_memory; }
+    out->h = packed; return unit_reference::copy(w,reference,capacity,used);
+}
+int kal_process_job_open(const char* reference, kal_uintptr length, kal_job* out) {
+    if (!out) return kal_err_invalid;
+    unit_identity u; if (!unit_parse(reference,length,u)) return kal_err_invalid;
+    if (!unit_compare()) return kal_err_not_supported;
+    HANDLE job = unit_open(u); if (!job) return okw::translate_win32(GetLastError());
+    const auto packed = okw::pack(job);
+    if (!packed) { CloseHandle(job); return kal_err_no_memory; }
+    out->h = packed; return kal_ok;
+}
+int kal_process_job_observe(kal_job job, const char* reference, kal_uintptr length, kal_u32* state) {
+    if (!state) return kal_err_invalid; *state = KAL_JOB_UNKNOWN;
+    unit_identity u; if (!unit_parse(reference,length,u)) return kal_err_invalid;
+    HANDLE original = okw::unpack(job.h); if (!original) return kal_err_invalid;
+    if (!unit_matches(original,u)) return kal_ok;
+    JOB_ACCOUNTING_ usage{};
+    if (!QueryInformationJobObject(original,JobObjectBasicAccountingInformation_,&usage,sizeof usage,nullptr)) return kal_ok;
+    *state = usage.ActiveProcesses == 0 ? KAL_JOB_EMPTY : KAL_JOB_OCCUPIED;
+    return kal_ok;
+}
+int kal_process_job_retire(kal_job job, const char* reference, kal_uintptr length, kal_u32* state) {
+    if (!state) return kal_err_invalid; *state = KAL_JOB_UNKNOWN;
+    unit_identity u; if (!unit_parse(reference,length,u)) return kal_err_invalid;
+    kal_u64 birth = 0;
+    if (u.owner != GetCurrentProcessId() || !unit_birth(birth) || birth != u.birth) return kal_err_permission;
+    HANDLE original = okw::unpack(job.h); if (!original) return kal_err_invalid;
+    if (!unit_matches(original,u)) return kal_ok;
+    BOOL member = FALSE;
+    if (!IsProcessInJob(GetCurrentProcess(),original,&member) || !member) return kal_ok;
+    JOB_ACCOUNTING_ usage{};
+    if (!QueryInformationJobObject(original,JobObjectBasicAccountingInformation_,&usage,sizeof usage,nullptr)) return kal_ok;
+    *state = usage.ActiveProcesses == 1 ? KAL_JOB_EMPTY : usage.ActiveProcesses > 1 ? KAL_JOB_OCCUPIED : KAL_JOB_UNKNOWN;
+    return kal_ok;
+}
 }
