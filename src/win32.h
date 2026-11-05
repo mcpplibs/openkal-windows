@@ -498,6 +498,7 @@ OKW_IMPORT DWORD  OKW_API GetModuleFileNameW(HANDLE, LPWSTR, DWORD);
 OKW_IMPORT HANDLE OKW_API OpenProcess(DWORD, BOOL, DWORD);
 OKW_IMPORT DWORD  OKW_API GetProcessId(HANDLE);
 OKW_IMPORT DWORD  OKW_API GetCurrentProcessId(void);
+OKW_IMPORT BOOL   OKW_API ProcessIdToSessionId(DWORD, DWORD*);
 OKW_IMPORT BOOL   OKW_API GetProcessTimes(HANDLE, FILETIME*, FILETIME*, FILETIME*, FILETIME*);
 OKW_IMPORT void   OKW_API ExitProcess(UINT);
 // A job that ends its member when the last handle to it closes (K5).

@@ -1382,17 +1382,34 @@ int kal_process_job_observe(kal_job job, const char* reference, kal_uintptr leng
     *state = usage.ActiveProcesses == 0 ? KAL_JOB_EMPTY : KAL_JOB_OCCUPIED;
     return kal_ok;
 }
-int kal_process_job_retire(kal_job job, const char* reference, kal_uintptr length, kal_u32* state) {
+int kal_process_job_retire(kal_job job, const char* reference, kal_uintptr length,
+                           const kal_program_identity* continuation, kal_u32* state) {
     if (!state) return kal_err_invalid; *state = KAL_JOB_UNKNOWN;
     unit_identity u; if (!unit_parse(reference,length,u)) return kal_err_invalid;
     kal_u64 birth = 0;
     if (u.owner != GetCurrentProcessId() || !unit_birth(birth) || birth != u.birth) return kal_err_permission;
     HANDLE original = okw::unpack(job.h); if (!original) return kal_err_invalid;
     if (!unit_matches(original,u)) return kal_ok;
+    if (!continuation || !continuation->id || continuation->id > 0xffffffffu || !continuation->started_ns) return kal_ok;
+    DWORD caller_session = 0, destination_session = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(),&caller_session)
+        || !ProcessIdToSessionId(static_cast<DWORD>(continuation->id),&destination_session)
+        || caller_session != destination_session) return kal_ok;
+    kal_process anchor{};
+    if (kal_process_open_id(continuation->id,&anchor) != kal_ok) return kal_ok;
+    kal_program_info info{}; info.self_size = sizeof info;
+    const int described = kal_process_info(anchor,KAL_PINFO_ID|KAL_PINFO_STARTED|KAL_PINFO_ENDED,&info);
+    if (described != kal_ok || info.ended || info.id != continuation->id
+        || (info.present & KAL_PINFO_STARTED) == 0 || info.started_ns != continuation->started_ns) {kal_process_close(anchor);return kal_ok;}
     BOOL member = FALSE;
-    if (!IsProcessInJob(GetCurrentProcess(),original,&member) || !member) return kal_ok;
+    if (!IsProcessInJob(GetCurrentProcess(),original,&member) || !member) {kal_process_close(anchor);return kal_ok;}
     JOB_ACCOUNTING_ usage{};
-    if (!QueryInformationJobObject(original,JobObjectBasicAccountingInformation_,&usage,sizeof usage,nullptr)) return kal_ok;
+    if (!QueryInformationJobObject(original,JobObjectBasicAccountingInformation_,&usage,sizeof usage,nullptr)) {kal_process_close(anchor);return kal_ok;}
+    info={};info.self_size=sizeof info;
+    const int final_description=kal_process_info(anchor,KAL_PINFO_ID|KAL_PINFO_STARTED|KAL_PINFO_ENDED,&info);
+    kal_process_close(anchor);
+    if (final_description != kal_ok || info.ended || info.id != continuation->id
+        || (info.present & KAL_PINFO_STARTED) == 0 || info.started_ns != continuation->started_ns) return kal_ok;
     *state = usage.ActiveProcesses == 1 ? KAL_JOB_EMPTY : usage.ActiveProcesses > 1 ? KAL_JOB_OCCUPIED : KAL_JOB_UNKNOWN;
     return kal_ok;
 }
