@@ -70,9 +70,11 @@ LoadLibraryW
 LocalFree
 MapViewOfFile
 MultiByteToWideChar
+OpenJobObjectW
 OpenProcess
 OpenThread
 PeekNamedPipe
+ProcessIdToSessionId
 QueryInformationJobObject
 QueryPerformanceCounter
 QueryPerformanceFrequency
@@ -88,6 +90,7 @@ SetConsoleMode
 SetFilePointerEx
 SetHandleInformation
 SetInformationJobObject
+SetLastError
 SetThreadPriority
 SetUnhandledExceptionFilter
 SetWaitableTimer
