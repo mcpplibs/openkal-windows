@@ -1222,13 +1222,31 @@ static int rename_with(kal_dir from, const char* a, kal_uintptr alen,
     if (!okw::acceptable(a, alen) || !okw::acceptable(b, blen)) return kal_err_invalid;
     if (refused_write(source_root) || refused_write(target_root)) return kal_err_permission;
 
+    // FileRenameInformation takes a directory handle and a simple leaf name.
+    // A name beneath the supplied root may contain several components; open
+    // its parent through that root before asking the object manager to rename.
+    struct target_parent {
+        kal_dir handle{};
+        ~target_parent() { if (handle.h) kal_fs_close_dir(handle); }
+    } parent;
+    void* target_directory = target_root;
+    kal_uintptr leaf = 0;
+    for (kal_uintptr i = 0; i < blen; ++i)
+        if (b[i] == '/' || b[i] == '\\') leaf = i + 1;
+    if (leaf != 0) {
+        const int opened = kal_fs_open_dir(to, b, leaf - 1, &parent.handle);
+        if (opened != kal_ok) return opened;
+        target_directory = dir_handle(parent.handle);
+        if (refused_write(target_directory)) return kal_err_permission;
+    }
+
     void* h = nullptr;
     // The name is renamed, a link included, never what it leads to.
     const long r = open_relative(source_root, a, alen, DELETE | SYNCHRONIZE,
                                  okw::file_open, okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
     if (!okw::ok(r)) return okw::translate_nt(r);
 
-    okw::wide_name w(b, blen);
+    okw::wide_name w(b + leaf, blen - leaf);
     if (!w.ok) { okw::NtClose(h); return kal_err_invalid; }
 
     // The renaming record carries the name inline. It is obtained rather than
@@ -1243,7 +1261,7 @@ static int rename_with(kal_dir from, const char* a, kal_uintptr alen,
     // field clear: the object manager refuses with a name collision and changes
     // nothing, on every format that renames at all.
     info->replace_if_exists = replace ? 1 : 0;
-    info->root_directory = target_root;
+    info->root_directory = target_directory;
     info->file_name_length = w.string.length;
     for (unsigned i = 0; i < w.string.length / 2; ++i) info->file_name[i] = w.buffer[i];
 
