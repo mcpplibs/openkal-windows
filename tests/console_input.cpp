@@ -18,14 +18,41 @@
 // absent or redirected. Every measurement ends with a key that always produces
 // a byte, so a key that produces none is measured rather than waited for; a
 // watchdog ends the test if even that does not arrive.
-#include <windows.h>
 #include <cstdio>
+#include "../src/win32.h"
 #include <openkal/stream.h>
 #include <openkal/terminal.h>
 #include <openkal/types.h>
 import mcpplibs.mtest;
 
 using namespace mcpplibs::mtest;
+
+// The console's own functions and its key record, declared here beside
+// src/win32.h rather than taken from <windows.h>: GCC on PE refuses the system
+// header together with the imported std ("conflicting language linkage").
+struct KEY_EVENT_RECORD {
+    BOOL  bKeyDown;
+    WORD  wRepeatCount;
+    WORD  wVirtualKeyCode;
+    WORD  wVirtualScanCode;
+    union { wchar_t UnicodeChar; char AsciiChar; } uChar;
+    DWORD dwControlKeyState;
+};
+struct INPUT_RECORD {
+    WORD EventType;
+    union { KEY_EVENT_RECORD KeyEvent; DWORD space[4]; } Event;
+};
+static_assert(sizeof(INPUT_RECORD) == 20, "the system's layout");
+constexpr WORD  KEY_EVENT         = 0x0001;
+constexpr DWORD LEFT_CTRL_PRESSED = 0x0008;
+constexpr WORD  VK_RETURN         = 0x0D;
+#define WINAPI OKW_API
+extern "C" {
+OKW_IMPORT BOOL OKW_API AllocConsole(void);
+OKW_IMPORT BOOL OKW_API FreeConsole(void);
+OKW_IMPORT BOOL OKW_API FlushConsoleInputBuffer(HANDLE);
+OKW_IMPORT BOOL OKW_API WriteConsoleInputW(HANDLE, const INPUT_RECORD*, DWORD, DWORD*);
+}
 
 namespace {
 
@@ -39,7 +66,7 @@ DWORD WINAPI watchdog(void*) {
 }
 
 void key(INPUT_RECORD* r, WORD vk, WORD scan, wchar_t ch, DWORD ctrl, BOOL down) {
-    ZeroMemory(r, sizeof *r);
+    *r = INPUT_RECORD{};
     r->EventType = KEY_EVENT;
     r->Event.KeyEvent.bKeyDown = down;
     r->Event.KeyEvent.wRepeatCount = 1;

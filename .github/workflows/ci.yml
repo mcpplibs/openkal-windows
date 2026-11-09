@@ -295,6 +295,21 @@ jobs:
         run: |
           extra=''
           [ -n '${{ matrix.target }}' ] && extra='--target ${{ matrix.target }}'
+          # A TOOLCHAIN DEFECT, ANSWERED ON THIS LEG ONLY AND NOT IN THE MANIFEST.
+          # GCC on PE emits the function-local static
+          # `std::_Sp_make_shared_tag::_S_ti()::__tag' of an imported std as a
+          # definition that is not COMDAT, once in every object that imports
+          # std (here mtest's and mcpplibs.os's) and once in libstdc++.a, and
+          # the link of every test is refused as a multiple definition. The
+          # definitions are one entity, so the test links accept the repeats;
+          # the option is written into the working copy for this step and
+          # taken out after it, so it never reaches a consumer's link.
+          case '${{ matrix.toolchain }}' in gcc@*)
+            sed 's|^ldflags = \["-lntdll", \(.*\)\]$|ldflags = ["-lntdll", \1, "-Wl,--allow-multiple-definition"]|' \
+              mcpp.toml > mcpp.toml.next && mv mcpp.toml.next mcpp.toml
+            grep -q -- '--allow-multiple-definition' mcpp.toml \
+              || { echo "::error::the link option was not written"; exit 1; } ;;
+          esac
           mcpp test $extra 2>&1 | tee tests.log
           missing=0
           for f in tests/*.cpp; do
