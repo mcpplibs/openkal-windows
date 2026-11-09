@@ -66,7 +66,7 @@ provides-interfaces = [
 ]
 
 [dependencies]
-openkal = { git = "https://github.com/mcpplibs/openkal.git", branch = "feat/0.25.0" }
+openkal = "0.25.0"
 
 # The package contributes definitions and no modules. The interface it
 # implements is declared by the specification package, which this package
