@@ -125,7 +125,14 @@ ldflags = ["-lntdll", "-lsynchronization", "-lshell32", "-lkernel32", "-lbcrypt"
 # built with `--release` came out shortened by a different amount. The dev
 # profile does not optimize and never showed it, which is also why the check
 # below now builds both profiles.
-cxxflags = ["-fno-exceptions", "-fno-rtti", "-fno-builtin"]
+#
+# The flags are attached to this package's own sources. The tests are
+# consumers: they import the test library, which imports `std`, and the
+# prebuilt `std` interface is compiled with exceptions and run-time type
+# information, which a unit compiled without them cannot import.
+flags = [
+  { glob = "src/**", cxxflags = ["-fno-exceptions", "-fno-rtti", "-fno-builtin"] },
+]
 
 # The other ABI names them in the sources instead --- src/win.cpp for the four
 # above and src/random.cpp for bcrypt --- where its compilers record
