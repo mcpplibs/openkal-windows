@@ -159,3 +159,16 @@ standalone = { defines = ["OKW_STANDALONE"] }
 # copy does as a `child'.
 [dev-dependencies]
 mcpplibs.mtest = "0.5.2"
+
+# THE TESTS ON THE GNU ABI WITH GCC, which CI runs under this profile. GCC on PE
+# emits the function-local static `std::_Sp_make_shared_tag::_S_ti()::__tag' of
+# an imported std as a definition that is not COMDAT, once in every object that
+# imports std --- the test library's and mcpplibs.os's --- and once in
+# libstdc++.a, so the link of every test is refused as a multiple definition.
+# The definitions are one entity, and this profile's link accepts the repeats.
+# A profile is the root's own, so the option never reaches a consumer's link.
+# Otherwise it is the dev profile, so the leg tests what dev tests.
+[profile.gnu-odr]
+opt     = 0
+debug   = true
+ldflags = ["-Wl,--allow-multiple-definition"]

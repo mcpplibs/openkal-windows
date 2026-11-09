@@ -63,6 +63,7 @@ DWORD WINAPI watchdog(void*) {
     std::printf("  FAIL  a read waited for a key that never arrived\n");
     std::fflush(stdout);
     ExitProcess(3);
+    return 3;
 }
 
 void key(INPUT_RECORD* r, WORD vk, WORD scan, wchar_t ch, DWORD ctrl, BOOL down) {
