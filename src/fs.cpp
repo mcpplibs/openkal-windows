@@ -1267,6 +1267,62 @@ int kal_fs_rename(kal_dir from, const char* a, kal_uintptr alen,
     return rename_with(from, a, alen, to, b, blen, true);
 }
 
+// A SECOND NAME FOR A FILE (0.25) is the link record, which has the rename
+// record's layout: the file is opened by its name without following a final
+// link, as `CreateHardLinkW' opens it, and given `b' beside `to'. A directory is
+// answered before the call, because the object manager's refusal names a
+// different condition; a name on another volume is STATUS_NOT_SAME_DEVICE,
+// which this interface states as an operation the pair cannot perform.
+int kal_fs_hard_link(kal_dir from, const char* a, kal_uintptr alen,
+                     kal_dir to, const char* b, kal_uintptr blen) {
+    void* source_root = dir_handle(from);
+    void* target_root = dir_handle(to);
+    if (!source_root || !target_root) return kal_err_invalid;
+    if (!okw::acceptable(a, alen) || !okw::acceptable(b, blen)) return kal_err_invalid;
+    if ((kal_fs_props(to) & KAL_FS_PROP_HARD_LINKS) == 0) return kal_err_not_supported;
+    if (refused_write(target_root)) return kal_err_permission;
+
+    void* h = nullptr;
+    const long r = open_relative(source_root, a, alen, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
+                                 okw::file_open, okw::file_open_reparse_point | okw::file_open_for_backup_intent, &h);
+    if (!okw::ok(r)) return okw::translate_nt(r);
+    {
+        okw::file_basic_information basic{};
+        okw::io_status_block s{};
+        if (okw::ok(okw::NtQueryInformationFile(h, &s, &basic, sizeof basic, okw::file_basic_information_class))
+            && (basic.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            && (basic.attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+            okw::NtClose(h);
+            return kal_err_is_directory;
+        }
+    }
+
+    okw::wide_name w(b, blen);
+    if (!w.ok) { okw::NtClose(h); return kal_err_invalid; }
+    const kal_uintptr storage_bytes = sizeof(okw::file_rename_information)
+                                    + okw::kMaxName * sizeof(wchar_t);
+    auto* info = static_cast<okw::file_rename_information*>(
+        kal_alloc(storage_bytes, alignof(okw::file_rename_information)));
+    if (!info) { okw::NtClose(h); return kal_err_no_memory; }
+    info->replace_if_exists = 0;
+    info->root_directory = target_root;
+    info->file_name_length = w.string.length;
+    for (unsigned i = 0; i < w.string.length / 2; ++i) info->file_name[i] = w.buffer[i];
+
+    okw::io_status_block s{};
+    const long n = okw::NtSetInformationFile(
+        h, &s, info, static_cast<unsigned long>(sizeof(okw::file_rename_information)
+                                                + w.string.length),
+        okw::file_link_information_class);
+    okw::NtClose(h);
+    kal_free(info, storage_bytes, alignof(okw::file_rename_information));
+    if (n == static_cast<long>(0xC0000035) /* STATUS_OBJECT_NAME_COLLISION */) return kal_err_exists;
+    if (n == static_cast<long>(0xC00000D4) /* STATUS_NOT_SAME_DEVICE */) return kal_err_not_supported;
+    if (!okw::ok(n)) return okw::translate_nt(n);
+    wrote(target_root, b, blen);
+    return kal_ok;
+}
+
 int kal_fs_rename_flags(kal_dir from, const char* a, kal_uintptr alen,
                         kal_dir to, const char* b, kal_uintptr blen, kal_uintptr flags) {
     if ((flags & ~static_cast<kal_uintptr>(KAL_RENAME_NO_REPLACE)) != 0) return kal_err_invalid;
@@ -1545,6 +1601,10 @@ kal_uintptr kal_fs_props(kal_dir d) {
     // own control code.
     if (a.info.attributes & okw::fs_supports_reparse_points)
         p |= KAL_FS_PROP_LINKS | KAL_FS_PROP_MAKE_LINKS;
+    // A second name for a file (0.25) where the volume reports that it stores
+    // several names for one file.
+    if (a.info.attributes & okw::fs_supports_hard_links)
+        p |= KAL_FS_PROP_HARD_LINKS;
     // A rename that does not replace is a field of the rename record (0.17).
     p |= KAL_FS_PROP_RENAME_NO_REPLACE;
     // A name held open is removed at once (0.17, clause 7.14) where the volume

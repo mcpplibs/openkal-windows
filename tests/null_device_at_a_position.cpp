@@ -5,25 +5,24 @@
 // was; and a flag beside a placed stream at one position is refused.
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 #include "../src/win32.h"
 #include <openkal/fs.h>
 #include <openkal/process.h>
 #include <openkal/stream.h>
 #include <openkal/timeout.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 extern "C" OKW_IMPORT unsigned long OKW_API GetModuleFileNameW(void*, wchar_t*, unsigned long);
 extern "C" OKW_IMPORT BOOL OKW_API GetProcessHandleCount(HANDLE, DWORD*);
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    if (held) { std::printf("ok: %s\n", what); return; }
-    std::printf("FAIL: %s\n", what);
-    ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 constexpr kal_u64 kBound = 10000ull * 1000ull * 1000ull;   // ten seconds
 
@@ -65,34 +64,37 @@ bool locate_self(kal_dir* volume, char* relative, kal_uintptr cap) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    // The started side. 41-43: a position is not a character device. 44: a
-    // read did not report the end of input. 45: a write was not accepted.
-    if (argc == 2 && std::strcmp(argv[1], "--null") == 0) {
-        if (GetFileType(GetStdHandle(STD_INPUT_HANDLE))  != FILE_TYPE_CHAR) return 41;
-        if (GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) != FILE_TYPE_CHAR) return 42;
-        if (GetFileType(GetStdHandle(STD_ERROR_HANDLE))  != FILE_TYPE_CHAR) return 43;
-        char b[8];
-        if (kal_stream_read(kal_stdin(), b, sizeof b) != 0) return 44;
-        if (kal_stream_write(kal_stdout(), "discarded", 9) != 9) return 45;
-        return 0;
-    }
+// The started side. 41-43: a position is not a character device. 44: a read
+// did not report the end of input. 45: a write was not accepted.
+child null_device{"null", [](std::vector<std::string> args) {
+    if (!args.empty()) return 46;
+    if (GetFileType(GetStdHandle(STD_INPUT_HANDLE))  != FILE_TYPE_CHAR) return 41;
+    if (GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) != FILE_TYPE_CHAR) return 42;
+    if (GetFileType(GetStdHandle(STD_ERROR_HANDLE))  != FILE_TYPE_CHAR) return 43;
+    char b[8];
+    if (kal_stream_read(kal_stdin(), b, sizeof b) != 0) return 44;
+    if (kal_stream_write(kal_stdout(), "discarded", 9) != 9) return 45;
+    return 0;
+}};
+
+UTest null_device_at_a_position_test{"null_device_at_a_position", [] {
 
     kal_dir volume{};
     char self[1024];
     if (!locate_self(&volume, self, sizeof self)) {
-        std::printf("SKIP: this program's own name could not be expressed against a volume\n");
-        return 0;
+        skip("this program's own name could not be expressed against a volume");
     }
     check((kal_process_props() & KAL_PROCESS_PROP_NULL_STREAMS) != 0, "the null device is claimed");
 
-    const char* args[2] = { "null_device_at_a_position", "--null" };
-    const kal_uintptr lens[2] = { std::strlen(args[0]), std::strlen(args[1]) };
+    const std::vector<std::string> command = child_command("null");
+    std::vector<const char*> args;
+    std::vector<kal_uintptr> lens;
+    for (const auto& a : command) { args.push_back(a.c_str()); lens.push_back(a.size()); }
     const kal_spawn how{ volume, volume, nullptr, nullptr, 0,
                          KAL_SPAWN_NULL_IN | KAL_SPAWN_NULL_OUT | KAL_SPAWN_NULL_ERR };
     auto run = [&](int& status, int& terminated) {
         kal_process child{};
-        const int spawned = kal_process_spawn(&how, self, std::strlen(self), args, lens, 2,
+        const int spawned = kal_process_spawn(&how, self, std::strlen(self), args.data(), lens.data(), args.size(),
                                               nullptr, nullptr, 0, nullptr, &child);
         if (spawned == kal_ok) {
             if (kal_timeout_wait_process(child, kBound, &status, &terminated) != kal_ok)
@@ -103,9 +105,8 @@ int main(int argc, char** argv) {
     };
     int status = -1, terminated = -1;
     check(run(status, terminated) == kal_ok, "a copy is started with the null device at its three positions");
-    check(terminated == 0 && status == 0,
-          "the copy finds a character device there, reads its end and writes to it");
-    if (status > 0) std::printf("  the copy reported %d\n", status);
+    expect(terminated == 0 && status == 0)
+        << "the copy finds a character device there, reads its end and writes to it (reported " << status << ")";
     // Counted across a second start: the first start of a process opens
     // handles of the system's own that it keeps (measured on the runner, not
     // under Wine), and those are not this operation's.
@@ -118,7 +119,7 @@ int main(int argc, char** argv) {
         const kal_spawn_streams placed{ kal_stream{0}, theirs, kal_stream{0} };
         const kal_spawn out_null{ volume, volume, nullptr, nullptr, 0, KAL_SPAWN_NULL_OUT };
         kal_process p{};
-        check(kal_process_spawn(&out_null, self, std::strlen(self), args, lens, 2,
+        check(kal_process_spawn(&out_null, self, std::strlen(self), args.data(), lens.data(), args.size(),
                                 nullptr, nullptr, 0, &placed, &p) == kal_err_invalid,
               "the null device beside a placed stream at one position is refused");
         kal_process_channel_close(theirs);
@@ -126,5 +127,4 @@ int main(int argc, char** argv) {
     }
 
     std::printf("openkal-windows: the null device at a position\n");
-    return failures == 0 ? 0 : 1;
-}
+}};

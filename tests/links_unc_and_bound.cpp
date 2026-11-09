@@ -12,13 +12,12 @@
 #include <openkal/fs.h>
 #include <openkal/process.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
-int failures = 0;
-void check(bool held, const char* what) {
-    std::printf("  %s  %s\n", held ? "held" : "FAIL", what);
-    if (!held) ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 kal_dir preopen_named(const char* want) {
     for (kal_uintptr i = 0; i < kal_fs_preopen_count(); ++i) {
         kal_dir d{}; char n[64]; kal_uintptr l = 0;
@@ -29,7 +28,7 @@ kal_dir preopen_named(const char* want) {
 }
 }
 
-int main() {
+UTest links_unc_and_bound_test{"links_unc_and_bound", [] {
     kal_dir here{}; char n[512]; kal_uintptr l = 0;
     kal_fs_preopen(0, &here, n, sizeof n, &l);
 
@@ -76,6 +75,4 @@ int main() {
         if (rc == kal_ok) { kal_process_wait(p, &status, &terminated); kal_process_close(p); }
         check(rc == kal_ok && status == 5, "a program bound to this one is started and awaited");
     }
-    std::printf(failures == 0 ? "openkal-windows: links, the network's names, a bound lifetime\n" : "");
-    return failures == 0 ? 0 : 1;
-}
+}};

@@ -21,12 +21,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <vector>
 #include "../src/win32.h"
+#include <openkal/env.h>
 #include <openkal/fs.h>
 #include <openkal/process.h>
 #include <openkal/stream.h>
 #include <openkal/timeout.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 // The one declaration src/win32.h does not carry, because the implementation
 // never needs to know where its own program is.
@@ -34,13 +40,7 @@ extern "C" OKW_IMPORT unsigned long OKW_API GetModuleFileNameW(void*, wchar_t*, 
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    if (held) { std::printf("ok: %s\n", what); return; }
-    std::printf("FAIL: %s\n", what);
-    ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 constexpr kal_u64 kBound = 10000ull * 1000ull * 1000ull;   // ten seconds
 
@@ -74,14 +74,33 @@ bool locate_self(kal_dir* volume, char* relative, kal_uintptr cap) {
     return false;
 }
 
+// This program's environment without the test runner's report. A copy that
+// inherited MTEST_REPORT would hold the report open, and the number it writes
+// through could name that file and not nothing.
+std::vector<std::string> environment_without_report() {
+    std::vector<std::string> out;
+    for (kal_uintptr i = 0; i < kal_env_var_count(); ++i) {
+        char name[512];
+        const kal_intptr n = kal_env_var_at(i, name, sizeof name);
+        if (n <= 0 || static_cast<kal_uintptr>(n) >= sizeof name) continue;
+        const std::string key(name, static_cast<std::size_t>(n));
+        if (key == "MTEST_REPORT" || key == "MTEST_PROTOCOL") continue;
+        const kal_intptr v = kal_env_var(key.data(), key.size(), nullptr, 0);
+        if (v < 0) continue;
+        std::string value(static_cast<std::size_t>(v), '\0');
+        if (v > 0) kal_env_var(key.data(), key.size(), value.data(), value.size());
+        out.push_back(key + "=" + value);
+    }
+    return out;
+}
+
 // Starts a copy that writes one byte through `value', awaits it, and reports
 // whether the byte reached the pipe the caller holds the other end of.
 // `place' selects whether the start places one stream of its own.
 void observe(kal_dir volume, const char* self, bool place, const char* what) {
     HANDLE pipe_read = nullptr, pipe_write = nullptr;
     if (!CreatePipe(&pipe_read, &pipe_write, nullptr, 0)) {
-        std::printf("SKIP: %s (the pipe could not be made)\n", what);
-        return;
+        skip(std::string(what) + " (the pipe could not be made)");
     }
     // Inheritable for a reason of the caller's own, and never placed.
     SetHandleInformation(pipe_write, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
@@ -89,8 +108,14 @@ void observe(kal_dir volume, const char* self, bool place, const char* what) {
     char value[32];
     std::snprintf(value, sizeof value, "%llu",
                   static_cast<unsigned long long>(reinterpret_cast<kal_uintptr>(pipe_write)));
-    const char* argv[3] = { "what_a_started_program_receives", "--write-through", value };
-    const kal_uintptr lens[3] = { std::strlen(argv[0]), std::strlen(argv[1]), std::strlen(argv[2]) };
+    const std::vector<std::string> command = child_command("write-through", std::vector<std::string>{ value });
+    std::vector<const char*> argv;
+    std::vector<kal_uintptr> lens;
+    for (const auto& a : command) { argv.push_back(a.c_str()); lens.push_back(a.size()); }
+    const std::vector<std::string> environment = environment_without_report();
+    std::vector<const char*> envp;
+    std::vector<kal_uintptr> elens;
+    for (const auto& e : environment) { envp.push_back(e.c_str()); elens.push_back(e.size()); }
 
     kal_stream mine{}, theirs{};
     const bool channel = place && kal_process_channel(&mine, &theirs) == kal_ok;
@@ -98,8 +123,8 @@ void observe(kal_dir volume, const char* self, bool place, const char* what) {
 
     const kal_spawn how{ volume, volume, nullptr, nullptr, 0, 0 };
     kal_process child{};
-    const int spawned = kal_process_spawn(&how, self, std::strlen(self), argv, lens, 3,
-                                          nullptr, nullptr, 0, channel ? &streams : nullptr,
+    const int spawned = kal_process_spawn(&how, self, std::strlen(self), argv.data(), lens.data(), argv.size(),
+                                          envp.data(), elens.data(), envp.size(), channel ? &streams : nullptr,
                                           &child);
     check(spawned == kal_ok, "a copy of this program is started");
     if (channel) kal_process_channel_close(theirs);
@@ -124,23 +149,24 @@ void observe(kal_dir volume, const char* self, bool place, const char* what) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    // The started side: write one byte through the number it was given. Where
-    // the handle was not conveyed the number names nothing, or names some
-    // object of this program's own that refuses the write.
-    if (argc == 3 && std::strcmp(argv[1], "--write-through") == 0) {
-        const HANDLE h = reinterpret_cast<HANDLE>(
-            static_cast<kal_uintptr>(std::strtoull(argv[2], nullptr, 10)));
-        DWORD wrote = 0;
-        WriteFile(h, "x", 1, &wrote, nullptr);
-        return 0;
-    }
+// The started side: write one byte through the number it was given. Where the
+// handle was not conveyed the number names nothing, or names some object of
+// this program's own that refuses the write.
+child write_through{"write-through", [](std::vector<std::string> args) {
+    if (args.size() != 1) return 2;
+    const HANDLE h = reinterpret_cast<HANDLE>(
+        static_cast<kal_uintptr>(std::strtoull(args[0].c_str(), nullptr, 10)));
+    DWORD wrote = 0;
+    WriteFile(h, "x", 1, &wrote, nullptr);
+    return 0;
+}};
+
+UTest what_a_started_program_receives_test{"what_a_started_program_receives", [] {
 
     kal_dir volume{};
     char self[1024];
     if (!locate_self(&volume, self, sizeof self)) {
-        std::printf("SKIP: this program's own name could not be expressed against a volume\n");
-        return 0;
+        skip("this program's own name could not be expressed against a volume");
     }
 
     observe(volume, self, false,
@@ -149,5 +175,4 @@ int main(int argc, char** argv) {
             "an unplaced inheritable handle does not reach a program started with a placed stream");
 
     std::printf("openkal-windows: what a started program receives\n");
-    return failures == 0 ? 0 : 1;
-}
+}};

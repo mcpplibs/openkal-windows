@@ -14,6 +14,8 @@
 // own file.
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 #include "../src/win32.h"
 #include "../src/handle.h"
 #include <openkal/abort.h>
@@ -23,15 +25,13 @@
 #include <openkal/process.h>
 #include <openkal/stream.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
-int failures = 0;
-void check(bool held, const char* what) {
-    if (held) { std::printf("ok: %s\n", what); return; }
-    std::printf("FAIL: %s\n", what);
-    ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 kal_uintptr length(const char* s) { return std::strlen(s); }
 
@@ -76,11 +76,14 @@ kal_dir by_name(const char* want) {
 // the caller's preopens, and returns its status, or -1.
 int start(kal_dir volume, const char* errand, const kal_preopen* grants, kal_uintptr n, kal_uintptr flags,
           const kal_spawn_streams* streams = nullptr, bool null_grants = false) {
-    const char* argv[2] = { "openkal_0_23", errand };
-    const kal_uintptr lens[2] = { length(argv[0]), length(errand) };
+    const std::vector<std::string> command = child_command(errand);
+    std::vector<const char*> argv;
+    std::vector<kal_uintptr> lens;
+    for (const auto& a : command) { argv.push_back(a.c_str()); lens.push_back(a.size()); }
     const kal_spawn how{ volume, volume, nullptr, null_grants ? nullptr : grants, n, flags };
     kal_process p{};
-    if (kal_process_spawn(&how, g_self, length(g_self), argv, lens, 2, nullptr, nullptr, 0, streams, &p) != kal_ok)
+    if (kal_process_spawn(&how, g_self, length(g_self), argv.data(), lens.data(), argv.size(), nullptr, nullptr, 0,
+                          streams, &p) != kal_ok)
         return -1;
     int status = -1, terminated = 0;
     kal_process_wait(p, &status, &terminated);
@@ -109,50 +112,50 @@ int memory_priority() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    const char* errand = argc > 1 ? argv[1] : "";
+// The recorded grant is the first preopen: a file read, a name absent, and the
+// end through kal_exit, which ends the record.
+child read_granted{"read", [](std::vector<std::string>) -> int {
+    kal_dir d = by_name("/granted");
+    kal_file f{};
+    if (kal_fs_open(d, "present.txt", 11, KAL_OPEN_READ, &f) != kal_ok) kal_exit(52);
+    kal_fs_close_file(f);
+    kal_node_info i{}; i.self_size = sizeof i;
+    kal_fs_info(d, "absent.txt", 10, 0, KAL_INFO_KIND, &i);
+    kal_exit(0);
+}};
 
-    if (std::strcmp(errand, "--read") == 0) {
-        // The recorded grant is the first preopen: a file read, a name absent,
-        // and the end through kal_exit, which ends the record.
-        kal_dir d = by_name("/granted");
-        kal_file f{};
-        if (kal_fs_open(d, "present.txt", 11, KAL_OPEN_READ, &f) != kal_ok) kal_exit(52);
-        kal_fs_close_file(f);
-        kal_node_info i{}; i.self_size = sizeof i;
-        kal_fs_info(d, "absent.txt", 10, 0, KAL_INFO_KIND, &i);
-        kal_exit(0);
-    }
-    if (std::strcmp(errand, "--grants") == 0) {
-        if (kal_fs_preopen_count() != 2) return 41;
-        kal_dir own_volume{};
-        if (!locate_self(&own_volume)) return 47;
-        kal_dir granted = by_name("/granted");
-        if (!granted.h) return 42;
-        DWORD flags = 1;
-        if (!GetHandleInformation(okw::unpack(granted.h), &flags) || (flags & HANDLE_FLAG_INHERIT)) return 43;
-        // A program this one starts without grants, the variable inherited.
-        kal_dir volume{};
-        for (kal_uintptr i = 0; i < kal_fs_preopen_count(); ++i) {
-            char name[16]{}; kal_uintptr len = 0; kal_dir d{};
-            if (kal_fs_preopen(i, &d, name, sizeof name, &len) == kal_ok && len == 2 && name[1] == ':') volume = d;
-        }
-        if (!volume.h) return 44;
-        return start(volume, "--defaults", nullptr, 0, 0, nullptr, true) == 0 ? 0 : 45;
-    }
-    if (std::strcmp(errand, "--defaults") == 0)
-        return kal_fs_preopen_count() > 2 && by_name("/granted").h == 0 ? 0 : 46;
-    if (std::strcmp(errand, "--priority") == 0) {
-        const int p = memory_priority();
-        return p < 0 ? 69 : 70 + p;
-    }
-    if (std::strcmp(errand, "--fault") == 0) { fault_here(); return 0; }
-
+child holds_its_grants{"grants", [](std::vector<std::string>) {
+    if (kal_fs_preopen_count() != 2) return 41;
+    kal_dir own_volume{};
+    if (!locate_self(&own_volume)) return 47;
+    kal_dir granted = by_name("/granted");
+    if (!granted.h) return 42;
+    DWORD flags = 1;
+    if (!GetHandleInformation(okw::unpack(granted.h), &flags) || (flags & HANDLE_FLAG_INHERIT)) return 43;
+    // A program this one starts without grants, the variable inherited.
     kal_dir volume{};
-    if (!locate_self(&volume)) {
-        std::printf("SKIP: this program's own name could not be expressed against a volume\n");
-        return 0;
+    for (kal_uintptr i = 0; i < kal_fs_preopen_count(); ++i) {
+        char name[16]{}; kal_uintptr len = 0; kal_dir d{};
+        if (kal_fs_preopen(i, &d, name, sizeof name, &len) == kal_ok && len == 2 && name[1] == ':') volume = d;
     }
+    if (!volume.h) return 44;
+    return start(volume, "defaults", nullptr, 0, 0, nullptr, true) == 0 ? 0 : 45;
+}};
+
+child has_the_defaults{"defaults", [](std::vector<std::string>) {
+    return kal_fs_preopen_count() > 2 && by_name("/granted").h == 0 ? 0 : 46;
+}};
+
+child reports_priority{"priority", [](std::vector<std::string>) {
+    const int p = memory_priority();
+    return p < 0 ? 69 : 70 + p;
+}};
+
+child faults{"fault", [](std::vector<std::string>) { fault_here(); return 0; }};
+
+UTest openkal_0_23_test{"openkal_0_23", [] {
+    kal_dir volume{};
+    if (!locate_self(&volume)) skip("this program's own name could not be expressed against a volume");
     char tmp[1100];
     std::snprintf(tmp, sizeof tmp, "%s/okw-0.23.tmp", g_dir);
     kal_fs_mkdir(volume, tmp, length(tmp));
@@ -170,7 +173,7 @@ int main(int argc, char** argv) {
     check((kal_process_props() & KAL_PROCESS_PROP_GRANT_DIR) != 0, "the directory grant is claimed");
     {
         const kal_preopen grants[2] = { { dir, "/granted", 8 }, { volume, g_volume_name, 2 } };
-        check(start(volume, "--grants", grants, 2, 0) == 0,
+        check(start(volume, "grants", grants, 2, 0) == 0,
               "the started program has its grants, uninheritable, and one it starts without grants has the defaults");
     }
 
@@ -186,7 +189,7 @@ int main(int argc, char** argv) {
         kal_dir rd{};
         check(kal_fs_dir_attenuate(dir, &rights, &rd) == kal_ok, "the directory is attenuated, recorded");
         const kal_preopen grants[2] = { { rd, "/granted", 8 }, { volume, g_volume_name, 2 } };
-        check(start(volume, "--read", grants, 2, 0) == 0, "a program granted the recorded handle reads through it");
+        check(start(volume, "read", grants, 2, 0) == 0, "a program granted the recorded handle reads through it");
         kal_fs_close_dir(rd);
         kal_fs_close_file(rec);
         char buf[4096] = {};
@@ -239,11 +242,11 @@ int main(int argc, char** argv) {
     // ECONOMY.
     {
         const int mine = memory_priority();
-        const int low = start(volume, "--priority", nullptr, 0, KAL_SPAWN_RESOURCES_ECONOMY, nullptr, true);
+        const int low = start(volume, "priority", nullptr, 0, KAL_SPAWN_RESOURCES_ECONOMY, nullptr, true);
         if (low == 69 || mine < 0) std::printf("  this system does not report a program's memory priority\n");
         else {
             check(low == 72, "a program started for economy has a low memory priority");
-            check(start(volume, "--priority", nullptr, 0, KAL_SPAWN_RESOURCES_PERFORMANCE, nullptr, true) == 70 + mine,
+            check(start(volume, "priority", nullptr, 0, KAL_SPAWN_RESOURCES_PERFORMANCE, nullptr, true) == 70 + mine,
                   "and one started for performance has the system's, its starter's");
         }
     }
@@ -253,7 +256,7 @@ int main(int argc, char** argv) {
         kal_stream mine{}, theirs{};
         if (kal_process_channel(&mine, &theirs) == kal_ok) {
             const kal_spawn_streams streams{ {0}, {0}, theirs };
-            const int s = start(volume, "--fault", nullptr, 0, 0, &streams, true);
+            const int s = start(volume, "fault", nullptr, 0, 0, &streams, true);
             kal_process_channel_close(theirs);
             static char report[16384];
             kal_uintptr have = 0;
@@ -281,5 +284,4 @@ int main(int argc, char** argv) {
     kal_fs_close_dir(dir);
     kal_fs_remove(volume, tmp, length(tmp));
     std::printf("openkal-windows: openkal 0.23\n");
-    return failures == 0 ? 0 : 1;
-}
+}};

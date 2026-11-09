@@ -6,15 +6,13 @@
 #include <cstdio>
 #include <openkal/task.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    std::printf("  %s  %s\n", held ? "held" : "FAIL", what);
-    if (!held) ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 long recurse(long n);
 long (*volatile g_recurse)(long) = recurse;
@@ -37,7 +35,7 @@ void room(void* p) {
 
 }  // namespace
 
-int main() {
+UTest stack_size_test{"stack_size", [] {
     const kal_uintptr asks[] = { 1u << 20, 16u << 20, 64u << 20 };
     for (kal_uintptr ask : asks) {
         probe q{ ask, 0, 0 };
@@ -58,6 +56,4 @@ int main() {
     kal_task never{};
     check(kal_task_start_sized(room, nullptr, ~kal_uintptr{0} - 4095, &never) == kal_err_no_memory,
           "a stack larger than the address space is reported as exhaustion");
-    std::printf("openkal-windows: a least stack size, %s\n", failures ? "FAILED" : "held");
-    return failures == 0 ? 0 : 1;
-}
+}};

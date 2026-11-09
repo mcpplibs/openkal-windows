@@ -18,6 +18,7 @@
 // the child's own duplicate keeps the pipe open and the bounded read does not
 // complete within the bound -- which is what turns a hang into a report.
 #include <cstdio>
+#include <string>
 #include <cstring>
 #include "../src/win32.h"
 #include <openkal/fs.h>
@@ -25,16 +26,13 @@
 #include <openkal/stream.h>
 #include <openkal/timeout.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    if (held) { std::printf("ok: %s\n", what); return; }
-    std::printf("FAIL: %s\n", what);
-    ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 // A volume, found among the preopens by its own name: exactly a letter and a
 // colon, which is how src/fs.cpp reports one and how it distinguishes a
@@ -55,11 +53,10 @@ bool find_a_volume(kal_dir* out) {
 
 }  // namespace
 
-int main() {
+UTest handle_inheritance_test{"handle_inheritance", [] {
     kal_dir sys{};
     if (!find_a_volume(&sys)) {
-        std::printf("SKIP: no volume was found among the preopens\n");
-        return 0;
+        skip("no volume was found among the preopens");
     }
 
     // The handle this test makes inheritable and never places. A real caller
@@ -70,18 +67,16 @@ int main() {
     sa.bInheritHandle = TRUE;
     HANDLE leak_read = nullptr, leak_write = nullptr;
     if (!CreatePipe(&leak_read, &leak_write, &sa, 0)) {
-        std::printf("SKIP: the pipe for the leak this test looks for could not be made\n");
-        return 0;
+        skip("the pipe for the leak this test looks for could not be made");
     }
 
     // The one stream this spawn legitimately places: the child's standard
     // input, which keeps a shell reading from it alive until told to stop.
     kal_stream mine{}, child_stdin{};
     if (kal_process_channel(&mine, &child_stdin) != kal_ok) {
-        std::printf("SKIP: a channel for the child's standard input could not be made\n");
         CloseHandle(leak_read);
         CloseHandle(leak_write);
-        return 0;
+        skip("a channel for the child's standard input could not be made");
     }
 
     const char* path = "Windows/System32/cmd.exe";
@@ -92,12 +87,11 @@ int main() {
     const int spawned = kal_process_spawn(&how, path, path_len, &path, &path_len, 1,
                                           nullptr, nullptr, 0, &streams, &child);
     if (spawned != kal_ok) {
-        std::printf("SKIP: cmd.exe could not be started (kal error %d)\n", spawned);
         kal_process_channel_close(mine);
         kal_process_channel_close(child_stdin);
         CloseHandle(leak_read);
         CloseHandle(leak_write);
-        return 0;
+        skip("cmd.exe could not be started (kal error " + std::to_string(spawned) + ")");
     }
     // The child's own copy of its standard input. This end belongs to the
     // child now; this process keeps `mine', which is what lets it end the
@@ -128,5 +122,4 @@ int main() {
     CloseHandle(leak_read);
 
     std::printf("openkal-windows: a spawn inherits only the handles it placed\n");
-    return failures == 0 ? 0 : 1;
-}
+}};

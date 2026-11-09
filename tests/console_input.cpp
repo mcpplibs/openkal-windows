@@ -18,31 +18,56 @@
 // absent or redirected. Every measurement ends with a key that always produces
 // a byte, so a key that produces none is measured rather than waited for; a
 // watchdog ends the test if even that does not arrive.
-#include <windows.h>
 #include <cstdio>
+#include "../src/win32.h"
 #include <openkal/stream.h>
 #include <openkal/terminal.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
+
+// The console's own functions and its key record, declared here beside
+// src/win32.h rather than taken from <windows.h>: GCC on PE refuses the system
+// header together with the imported std ("conflicting language linkage").
+struct KEY_EVENT_RECORD {
+    BOOL  bKeyDown;
+    WORD  wRepeatCount;
+    WORD  wVirtualKeyCode;
+    WORD  wVirtualScanCode;
+    union { wchar_t UnicodeChar; char AsciiChar; } uChar;
+    DWORD dwControlKeyState;
+};
+struct INPUT_RECORD {
+    WORD EventType;
+    union { KEY_EVENT_RECORD KeyEvent; DWORD space[4]; } Event;
+};
+static_assert(sizeof(INPUT_RECORD) == 20, "the system's layout");
+constexpr WORD  KEY_EVENT         = 0x0001;
+constexpr DWORD LEFT_CTRL_PRESSED = 0x0008;
+constexpr WORD  VK_RETURN         = 0x0D;
+#define WINAPI OKW_API
+extern "C" {
+OKW_IMPORT BOOL OKW_API AllocConsole(void);
+OKW_IMPORT BOOL OKW_API FreeConsole(void);
+OKW_IMPORT BOOL OKW_API FlushConsoleInputBuffer(HANDLE);
+OKW_IMPORT BOOL OKW_API WriteConsoleInputW(HANDLE, const INPUT_RECORD*, DWORD, DWORD*);
+}
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    std::printf("  %s  %s\n", held ? "held" : "FAIL", what);
-    std::fflush(stdout);
-    if (!held) ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 DWORD WINAPI watchdog(void*) {
     Sleep(20000);
     std::printf("  FAIL  a read waited for a key that never arrived\n");
     std::fflush(stdout);
     ExitProcess(3);
+    return 3;
 }
 
 void key(INPUT_RECORD* r, WORD vk, WORD scan, wchar_t ch, DWORD ctrl, BOOL down) {
-    ZeroMemory(r, sizeof *r);
+    *r = INPUT_RECORD{};
     r->EventType = KEY_EVENT;
     r->Event.KeyEvent.bKeyDown = down;
     r->Event.KeyEvent.wRepeatCount = 1;
@@ -112,17 +137,15 @@ void show(const char* mode, const unsigned char* b, int n) {
 
 }  // namespace
 
-int main() {
+UTest console_input_test{"console_input", [] {
     FreeConsole();
     if (!AllocConsole()) {
-        std::printf("openkal-windows: no console could be allocated; not observed\n");
-        return 0;
+        skip("no console could be allocated; not observed");
     }
     HANDLE in = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                             nullptr, OPEN_EXISTING, 0, nullptr);
     if (in == INVALID_HANDLE_VALUE) {
-        std::printf("openkal-windows: the console's input could not be opened; not observed\n");
-        return 0;
+        skip("the console's input could not be opened; not observed");
     }
     CreateThread(nullptr, 0, watchdog, nullptr, 0, nullptr);
     const kal_stream s{ reinterpret_cast<kal_uintptr>(in) };
@@ -190,8 +213,5 @@ int main() {
     }
     show("line on: a Enter", b, got);
     check(got >= 2 && b[0] == 'a', "a line is delivered");
-
-    std::printf("openkal-windows: what a console delivers, %s\n", failures ? "FAILED" : "held");
     std::fflush(stdout);
-    return failures == 0 ? 0 : 1;
-}
+}};

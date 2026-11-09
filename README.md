@@ -4,16 +4,30 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.24.0"
+openkal = "0.25.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.20.0"
+openkal-windows = "0.21.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
 drawn against systems that share an ancestry; a third implementation on a system
 that shares none of it is what turns "this interface is not Unix's shape" from a
 claim into an observation.
+
+## What 0.21 adds (openkal 0.25)
+
+**A second name for a file** (`kal_fs_hard_link`) is the link record of
+`NtSetInformationFile`, which has the rename record's layout; the file is opened by
+its name without following a final link, as `CreateHardLinkW` opens it.
+`KAL_FS_PROP_HARD_LINKS` is claimed where the volume reports
+`FILE_SUPPORTS_HARD_LINKS`. A directory is refused with `kal_err_is_directory`
+before the call, and a name on another volume (`STATUS_NOT_SAME_DEVICE`) with
+`kal_err_not_supported`.
+
+**The requests to end are counted.** The console control routine adds one to the
+stop word for each event, atomically because events may overlap, and skips zero
+when the count wraps.
 
 ## Observable process units
 
