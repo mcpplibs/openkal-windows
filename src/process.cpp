@@ -999,7 +999,12 @@ int     g_stop_armed = 0;
 // installing a routine does not clear, so a request its starter declined
 // stays declined.
 BOOL OKW_API stop_routine(DWORD) {
-    g_stop_word = 1;
+    // EACH REQUEST IS COUNTED (openkal 0.25), and the count skips zero when it
+    // wraps, so the word is never zero again once a request has arrived. The
+    // routine runs on a context of the system's for each event, and events may
+    // overlap, so the addition is atomic.
+    volatile long* word = reinterpret_cast<volatile long*>(&g_stop_word);
+    if (okw::atomic::increment(word) == 0) (void)okw::atomic::increment(word);
     WakeByAddressAll(&g_stop_word);
     return TRUE;
 }

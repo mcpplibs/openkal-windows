@@ -78,8 +78,10 @@ using okw_u32  = unsigned int;
 extern "C" long long _InterlockedExchange64(volatile long long*, long long);
 extern "C" long long _InterlockedExchangeAdd64(volatile long long*, long long);
 extern "C" long long _InterlockedOr64(volatile long long*, long long);
-#pragma intrinsic(_InterlockedExchange64, _InterlockedExchangeAdd64, _InterlockedOr64)
+extern "C" long _InterlockedIncrement(volatile long*);
+#pragma intrinsic(_InterlockedExchange64, _InterlockedExchangeAdd64, _InterlockedOr64, _InterlockedIncrement)
 namespace okw::atomic {
+inline long increment(volatile long* p) { return _InterlockedIncrement(p); }
 inline long long exchange(volatile long long* p, long long v) { return _InterlockedExchange64(p, v); }
 inline long long fetch_add(volatile long long* p, long long v) { return _InterlockedExchangeAdd64(p, v); }
 inline long long load(volatile long long* p) { return _InterlockedOr64(p, 0); }
@@ -88,6 +90,7 @@ inline long long fetch_or(volatile long long* p, long long v) { return _Interloc
 }  // namespace okw::atomic
 #else
 namespace okw::atomic {
+inline long increment(volatile long* p) { return __atomic_add_fetch(p, 1, __ATOMIC_ACQ_REL); }
 inline long long exchange(volatile long long* p, long long v) { return __atomic_exchange_n(p, v, __ATOMIC_ACQ_REL); }
 inline long long fetch_add(volatile long long* p, long long v) { return __atomic_fetch_add(p, v, __ATOMIC_ACQ_REL); }
 inline long long load(volatile long long* p) { return __atomic_load_n(p, __ATOMIC_ACQUIRE); }
@@ -216,6 +219,7 @@ enum : unsigned long {
     fs_case_sensitive_search  = 0x00000001u,
     fs_supports_reparse_points = 0x00000080u,
     fs_supports_posix_unlink_rename = 0x00000400u,
+    fs_supports_hard_links = 0x00400000u,          // FILE_SUPPORTS_HARD_LINKS (0.25)
     fs_supports_open_by_file_id = 0x01000000u,
 };
 
@@ -230,6 +234,7 @@ enum : int {
     file_disposition_information_ex_class = 64,
     file_end_of_file_information_class = 20,
     file_rename_information_class    = 10,
+    file_link_information_class      = 11,   // the rename record's layout (0.25)
     file_id_full_directory_information_class = 38,
 };
 
