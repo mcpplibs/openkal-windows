@@ -11,12 +11,15 @@
 #include <openkal/time.h>
 #include <openkal/timeout.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
 
-int main() {
+using namespace mcpplibs::mtest;
+
+UTest bounded_read_of_an_idle_pipe_test{"bounded_read_of_an_idle_pipe", [] {
     kal_stream mine{}, theirs{};
     if (kal_process_channel(&mine, &theirs) != kal_ok) {
-        std::printf("FAIL: a channel is made\n");
-        return 1;
+        fail("a channel is made");
+        return;
     }
     char byte = 0;
     const kal_duration started = kal_time_monotonic();
@@ -24,16 +27,7 @@ int main() {
     const kal_duration took = kal_time_monotonic() - started;
     kal_process_channel_close(theirs);
     kal_process_channel_close(mine);
-    int failures = 0;
-    if (n != -kal_err_again) {
-        std::printf("FAIL: a bounded read of an idle pipe expires (it answered %lld)\n", static_cast<long long>(n));
-        ++failures;
-    }
-    if (took > 400000000ull) {
-        std::printf("FAIL: it expires near its bound (100 ms asked, %llu ms taken)\n",
-                    static_cast<unsigned long long>(took / 1000000ull));
-        ++failures;
-    }
-    if (failures == 0) std::printf("openkal-windows: a bounded read of an idle pipe expires near its bound\n");
-    return failures == 0 ? 0 : 1;
-}
+    expect(n == -kal_err_again) << "a bounded read of an idle pipe expires (it answered " << static_cast<long long>(n) << ")";
+    expect(took <= 400000000ull) << "it expires near its bound (100 ms asked, "
+                                 << static_cast<unsigned long long>(took / 1000000ull) << " ms taken)";
+}};

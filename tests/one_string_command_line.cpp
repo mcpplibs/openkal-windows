@@ -13,16 +13,13 @@
 #include <openkal/process.h>
 #include <openkal/stream.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    if (held) { std::printf("ok: %s\n", what); return; }
-    std::printf("FAIL: %s\n", what);
-    ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 bool system_volume(kal_dir* volume) {
     const kal_uintptr count = kal_fs_preopen_count();
@@ -68,15 +65,14 @@ int run(kal_uintptr flags, const char* command, char* out, kal_uintptr cap, kal_
 
 }  // namespace
 
-int main() {
+UTest one_string_command_line_test{"one_string_command_line", [] {
     check((kal_process_props() & KAL_PROCESS_PROP_ONE_STRING) != 0, "the position is claimed");
     char out[4096];
     kal_uintptr got = 0;
     const char* command = "\"echo \"a b\" && echo c\"";
     const int rc = run(KAL_SPAWN_ONE_STRING, command, out, sizeof out, &got);
-    if (rc == -1) { std::printf("skip: no C: volume among the preopens\n"); return 0; }
+    if (rc == -1) skip("no C: volume among the preopens");
     check(rc == kal_ok, "the interpreter starts with the command line joined as it is");
     check(std::strstr(out, "\"a b\"") != nullptr && std::strstr(out, "c") != nullptr,
           "and runs the command as written, quotation marks included");
-    return failures;
-}
+}};

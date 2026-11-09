@@ -11,16 +11,13 @@
 #include <openkal/process.h>
 #include <openkal/timeout.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    if (held) { std::printf("ok: %s\n", what); return; }
-    std::printf("FAIL: %s\n", what);
-    ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 bool system_volume(kal_dir* volume) {
     const kal_uintptr count = kal_fs_preopen_count();
@@ -47,10 +44,9 @@ int start(const char* command, kal_process* p) {
 
 }  // namespace
 
-int main() {
+UTest bounded_wait_of_a_bound_program_test{"bounded_wait_of_a_bound_program", [] {
     if ((kal_process_props() & KAL_PROCESS_PROP_BOUND_LIFETIME) == 0) {
-        std::printf("openkal-windows: no bound lifetime here; nothing to observe\n");
-        return 0;
+        skip("no bound lifetime here; nothing to observe");
     }
     kal_process slow{};
     check(start("ping -n 3 127.0.0.1 >NUL", &slow) == kal_ok, "a bound program starts");
@@ -65,7 +61,4 @@ int main() {
     check(start("exit 3", &quick) == kal_ok, "a second bound program starts");
     check(kal_timeout_wait_process(quick, 20000000000ull, &status, &terminated) == kal_ok && status == 3,
           "a bounded wait reports the status the program returned");
-
-    if (failures == 0) std::printf("openkal-windows: a bound program is waited for with a bound\n");
-    return failures == 0 ? 0 : 1;
-}
+}};

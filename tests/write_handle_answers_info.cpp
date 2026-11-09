@@ -25,23 +25,20 @@
 // environment that cannot produce the failing condition is not a second
 // opinion about it.
 #include <cstdio>
+#include <string>
 #include <openkal/fs.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
-int failures = 0;
-
-void check(bool ok, const char* what) {
-    if (!ok) {
-        std::printf("  FAILED %s\n", what);
-        ++failures;
-    }
-}
+void check(bool ok, const char* what) { expect(ok) << what; }
 
 } // namespace
 
-int main() {
+UTest write_handle_answers_info_test{"write_handle_answers_info", [] {
     // The first preopened directory, the same way handle_inheritance.cpp finds
     // one: a test writes where the program was given somewhere to write.
     kal_dir cwd{};
@@ -58,8 +55,8 @@ int main() {
         }
     }
     if (!haveDir) {
-        std::printf("openkal-windows: no preopened directory to test in\n");
-        return 1;
+        fail("a preopened directory to test in");
+        return;
     }
 
     static const char name[] = "okw-write-handle-info.tmp";
@@ -71,8 +68,8 @@ int main() {
                                    &f);
     check(opened == kal_ok, "a file opens for writing");
     if (opened != kal_ok) {
-        std::printf("openkal-windows: kal_fs_open returned %d\n", opened);
-        return 1;
+        fail("kal_fs_open returned " + std::to_string(opened));
+        return;
     }
 
     // THE ASSERTION. The handle was granted a line ago and the caller asks it
@@ -94,5 +91,4 @@ int main() {
     kal_fs_remove(cwd, name, len);
 
     std::printf("openkal-windows: a write-only handle answers for itself\n");
-    return failures == 0 ? 0 : 1;
-}
+}};

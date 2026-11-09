@@ -11,18 +11,16 @@
 #include <openkal/fs.h>
 #include <openkal/task.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 extern "C" OKW_IMPORT BOOL   OKW_API GetProcessHandleCount(HANDLE, DWORD*);
 extern "C" OKW_IMPORT HANDLE OKW_API GetCurrentProcess(void);
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    std::printf("  %s  %s\n", held ? "held" : "FAIL", what);
-    if (!held) ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 DWORD handles() { DWORD n = 0; return GetProcessHandleCount(GetCurrentProcess(), &n) ? n : 0; }
 
@@ -41,11 +39,11 @@ void reader(void* p) {
 
 }  // namespace
 
-int main() {
+UTest enumeration_ends_at_close_test{"enumeration_ends_at_close", [] {
     kal_dir cwd{};
     if (kal_fs_preopen_count() == 0 || kal_fs_preopen(0, &cwd, nullptr, 0, nullptr) != kal_ok) {
-        std::printf("openkal-windows: no preopened directory to test in\n");
-        return 1;
+        fail("a preopened directory to test in");
+        return;
     }
     kal_fs_mkdir(cwd, "okw-enum.d", 10);
     kal_file f{};
@@ -101,6 +99,4 @@ int main() {
 
     kal_fs_remove(cwd, "okw-enum.d/inner", 16);
     kal_fs_remove(cwd, "okw-enum.d", 10);
-    std::printf("openkal-windows: what closing a directory ends, %s\n", failures ? "FAILED" : "held");
-    return failures == 0 ? 0 : 1;
-}
+}};

@@ -146,3 +146,9 @@ default = []
 # the loader, and this implementation adds nothing. Where it does not, the entry
 # point is this implementation's, and the link line names it.
 standalone = { defines = ["OKW_STANDALONE"] }
+
+# The tests are written with the mtest library (mcpp-community/mtest): each file
+# declares its cases, and a test that starts a copy of itself declares what the
+# copy does as a `child'.
+[dev-dependencies]
+mcpplibs.mtest = "0.5.2"

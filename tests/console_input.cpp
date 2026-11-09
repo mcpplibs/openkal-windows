@@ -23,16 +23,13 @@
 #include <openkal/stream.h>
 #include <openkal/terminal.h>
 #include <openkal/types.h>
+import mcpplibs.mtest;
+
+using namespace mcpplibs::mtest;
 
 namespace {
 
-int failures = 0;
-
-void check(bool held, const char* what) {
-    std::printf("  %s  %s\n", held ? "held" : "FAIL", what);
-    std::fflush(stdout);
-    if (!held) ++failures;
-}
+void check(bool held, const char* what) { expect(held) << what; }
 
 DWORD WINAPI watchdog(void*) {
     Sleep(20000);
@@ -112,17 +109,15 @@ void show(const char* mode, const unsigned char* b, int n) {
 
 }  // namespace
 
-int main() {
+UTest console_input_test{"console_input", [] {
     FreeConsole();
     if (!AllocConsole()) {
-        std::printf("openkal-windows: no console could be allocated; not observed\n");
-        return 0;
+        skip("no console could be allocated; not observed");
     }
     HANDLE in = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                             nullptr, OPEN_EXISTING, 0, nullptr);
     if (in == INVALID_HANDLE_VALUE) {
-        std::printf("openkal-windows: the console's input could not be opened; not observed\n");
-        return 0;
+        skip("the console's input could not be opened; not observed");
     }
     CreateThread(nullptr, 0, watchdog, nullptr, 0, nullptr);
     const kal_stream s{ reinterpret_cast<kal_uintptr>(in) };
@@ -190,8 +185,5 @@ int main() {
     }
     show("line on: a Enter", b, got);
     check(got >= 2 && b[0] == 'a', "a line is delivered");
-
-    std::printf("openkal-windows: what a console delivers, %s\n", failures ? "FAILED" : "held");
     std::fflush(stdout);
-    return failures == 0 ? 0 : 1;
-}
+}};
