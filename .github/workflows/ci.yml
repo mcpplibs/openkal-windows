@@ -39,13 +39,18 @@ jobs:
   # On the system itself.
   conformance:
     name: conformance (${{ matrix.name }})
-    runs-on: windows-2022
+    runs-on: ${{ matrix.os || 'windows-2022' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - { name: 'llvm, msvc ABI', toolchain: 'llvm@20.1.7',  target: '' }
+          # Windows 11 24H2's build (26100): the system that has the record a
+          # name is answered by in one request, and the only one on which a
+          # name's identity could differ from its open file's
+          # (tests/one_identity_for_a_node.cpp).
+          - { name: 'llvm, msvc ABI, build 26100', toolchain: 'llvm@20.1.7',  target: '', os: 'windows-2025' }
           - { name: 'msvc',           toolchain: 'msvc@system',  target: '' }
           - { name: 'gcc, gnu CRT',   toolchain: 'gcc@16.1.0',   target: 'x86_64-windows-gnu' }
     defaults:
