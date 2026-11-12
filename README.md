@@ -7,13 +7,25 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 openkal = "0.25.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.21.0"
+openkal-windows = "0.21.1"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
 drawn against systems that share an ancestry; a third implementation on a system
 that shares none of it is what turns "this interface is not Unix's shape" from a
 claim into an observation.
+
+## What 0.21.1 corrects
+
+**A handle is retired before its value is closed.** A connection, a listener and a
+datagram socket were closed first and retired second. The system gives a closed
+value to the next handle made in any context, so a file opened by another context
+between the two took the value with the generation the socket's handle still had,
+and the retire then made the file's handle stale: its stream was no stream and its
+reads returned nothing of the file (openkal-linux#53; this implementation has the
+same construction). The three releases retire and then close, as a file's and a
+directory's do. A generation is read and advanced through the atomic operations.
+This is 0.22.1's correction on the 0.21 line.
 
 ## What 0.21 adds (openkal 0.25)
 

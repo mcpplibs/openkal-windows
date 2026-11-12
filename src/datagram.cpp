@@ -214,8 +214,8 @@ kal_intptr kal_datagram_recv_from(kal_datagram d, void* buf, kal_uintptr len,
 void kal_datagram_close(kal_datagram d) {
     const SOCKET s = socket_of(d);
     if (bad(s)) return;
-    if (auto* n = net()) n->close(s);
     okw::retire(d.h);
+    if (auto* n = net()) n->close(s);
 }
 
 // Broadcast is not claimed. The system provides it only after SO_BROADCAST has
