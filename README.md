@@ -7,13 +7,41 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 openkal = "0.25.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.21.0"
+openkal-windows = "0.22.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
 drawn against systems that share an ancestry; a third implementation on a system
 that shares none of it is what turns "this interface is not Unix's shape" from a
 claim into an observation.
+
+## What 0.22 corrects
+
+**A node has one identity, however it was reached.** The identity `kal_fs_info`
+and `kal_fs_file_info` report is the volume's serial number and the file's index.
+A handle's volume is asked `FileFsVolumeInformation`, whose serial number is 32
+bits; a name, where the system has Windows 11 24H2's `FileStatBasicInformation`,
+was answered with that record's serial number, the 64 bits the file system keeps.
+On builds 26100 and later a file that was open and the same file asked about by
+name were therefore two nodes, and a program that keys a table of files by
+identity held one file twice. The handle's word is the identity's, as it is on
+every earlier system and in a listing; the record's word is translated to it
+through what is learned by opening one node of each volume, so an enquiry by
+name stays one request after the first of a volume. Nothing is assumed about how
+the two numbers relate. (Found as mcpp-language-server issue 86: clangd as an ok
+image ended in its include analysis on Windows 11 24H2 alone.)
+
+**A closed attenuation gives its place back.** `kal_fs_dir_attenuate` keeps 64
+trees for the life of the program. A tree's place was taken by every attenuation
+and returned by none, so the 65th was refused with `kal_err_no_memory` however
+many had been closed --- a program granting three read-only directories to each
+program it starts was refused its 22nd start. A tree that keeps no record gives
+its place back when its last handle closes; one that keeps a record holds it
+until the program ends, which is when its record is ended. The 64 now bound the
+trees held at once.
+
+CI gains a row on `windows-2025` (build 26100), the system the first of these
+could be seen on.
 
 ## What 0.21 adds (openkal 0.25)
 

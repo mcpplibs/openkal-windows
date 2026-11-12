@@ -398,12 +398,27 @@ void forget(void* h) {
     const int ri = e->root;
     drop_entry(e);
     if (ri >= 0 && --g_roots[ri].refs <= 0) {
-        // The last handle of the tree: what it recorded is written now. The
-        // root itself stays until the program ends, which writes its `e'.
-        flush(g_roots[ri]);
-        g_roots[ri].names.clear();
-        g_roots[ri].listed.clear();
-        if (g_roots[ri].base) { okw::NtClose(g_roots[ri].base); g_roots[ri].base = nullptr; }
+        // The last handle of the tree: what it recorded is written now. A root
+        // that keeps a record stays until the program ends, which writes its
+        // `e'.
+        root& r = g_roots[ri];
+        flush(r);
+        r.names.clear();
+        r.listed.clear();
+        if (r.base) { okw::NtClose(r.base); r.base = nullptr; }
+        // A ROOT THAT KEEPS NO RECORD HAS NOTHING LEFT TO WRITE, AND ITS PLACE
+        // IS GIVEN BACK (0.22.0). The table has kRoots places for the life of
+        // the program, and a place was taken by every attenuation and returned
+        // by none: a program that grants the same three directories to each
+        // program it starts was refused its 22nd start (kal_err_no_memory,
+        // "out of memory" to its caller), with every earlier grant long closed
+        // (mcpp-language-server issue 86).
+        if (!r.record) {
+            give_back(r.rprefix, r.rplen + 1);
+            give_back(r.batch, kBatch);
+            r.seen.clear();
+            r = root{};
+        }
     }
 }
 

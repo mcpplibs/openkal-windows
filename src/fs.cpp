@@ -890,10 +890,64 @@ namespace {
 volatile long long g_by_name = -1;   // -1 not asked; 0 none; 1 the stat record; 2 the basic one too
 pfn_NtQueryInformationByName_ g_query_by_name = nullptr;
 
+// ONE IDENTITY FOR A NODE, HOWEVER IT WAS REACHED (0.22.0).
+//
+// The identity's first word is the volume's serial number, and this system
+// states that number twice. A handle is asked FileFsVolumeInformation, whose
+// serial number is 32 bits; the record of Windows 11 24H2 (`volume_serial_number'
+// above) is the 64 bits the file system keeps. Written into the identity as
+// each came, the two differed for every file on such a system: a file opened
+// and the same file asked about by name were two nodes. A caller that keys a
+// table by identity --- a compiler's table of the files it has entered --- then
+// held one file twice, and a lookup by name of a file it had opened missed
+// (mcpp-language-server issue 86: clangd ended in its include analysis, on
+// builds 26100 and 26200 and on no earlier one, which has not the record).
+//
+// The word a handle gives is the identity's, because it is what every system
+// before 24H2 gave for a name too, and what a listing gives. How the 64 bits
+// relate to the 32 is the file system's own affair and is not assumed here: a
+// volume's two numbers are learned together, once, by opening a node of it ---
+// the enquiry that was to be answered by name is answered by opening instead,
+// as it is wherever the record is refused --- and every later enquiry of that
+// volume is one request again.
+struct volume_words { okw_u64 by_name; okw_u64 by_handle; };
+constexpr int kVolumes = 32;
+volume_words g_volumes[kVolumes];
+int g_volume_count = 0;
+SRWLOCK_ g_volume_lock{};
+
+bool volume_of(okw_u64 by_name, okw_u64& by_handle) {
+    bool found = false;
+    AcquireSRWLockExclusive(&g_volume_lock);
+    for (int i = 0; i < g_volume_count; ++i)
+        if (g_volumes[i].by_name == by_name) { by_handle = g_volumes[i].by_handle; found = true; break; }
+    ReleaseSRWLockExclusive(&g_volume_lock);
+    return found;
+}
+
+// A node of the volume was opened: its handle's word is the one the record's
+// stands for. A table that is full learns nothing more, and the volumes beyond
+// it are answered by opening every time, which is correct and slower.
+void learn_volume(okw_u64 by_name, void* h) {
+    struct { okw::file_fs_volume_information info; wchar_t label_tail[128]; } volume{};
+    okw::io_status_block s{};
+    const long rv = okw::NtQueryVolumeInformationFile(h, &s, &volume, sizeof volume,
+                                                      okw::fs_volume_information_class);
+    if (!(okw::ok(rv) || rv == okw::status_buffer_overflow)) return;
+    AcquireSRWLockExclusive(&g_volume_lock);
+    bool known = false;
+    for (int i = 0; i < g_volume_count; ++i) if (g_volumes[i].by_name == by_name) known = true;
+    if (!known && g_volume_count < kVolumes)
+        g_volumes[g_volume_count++] = { by_name, static_cast<okw_u64>(volume.info.serial_number) };
+    ReleaseSRWLockExclusive(&g_volume_lock);
+}
+
 
 // kal_ok or a kal_err when answered; 1 when the node is to be opened instead.
+// `learn' is set, with the record's word for the volume, when the node is to
+// be opened because that word's counterpart is not yet known.
 int info_by_name(void* root, const char* name, kal_uintptr len, kal_uintptr flags, kal_u32 wanted,
-                 kal_node_info* out, bool& absent) {
+                 kal_node_info* out, bool& absent, bool& learn, okw_u64& volume_by_name) {
     long long have = okw::atomic::load(&g_by_name);
     if (have < 0) {
         g_query_by_name = reinterpret_cast<pfn_NtQueryInformationByName_>(
@@ -942,8 +996,13 @@ int info_by_name(void* root, const char* name, kal_uintptr len, kal_uintptr flag
     // The volume's serial number, where the record did not give it.
     bool one_component = true;
     for (kal_uintptr i = 0; i < len; ++i) if (name[i] == '/' || name[i] == '\\') one_component = false;
-    okw_u64 serial = basic ? static_cast<okw_u64>(b.volume_serial_number) : 0;
-    bool have_serial = basic;
+    okw_u64 serial = 0;
+    bool have_serial = false;
+    if (basic && (wanted & KAL_INFO_IDENTITY)) {
+        volume_by_name = static_cast<okw_u64>(b.volume_serial_number);
+        if (!volume_of(volume_by_name, serial)) { learn = true; return 1; }
+        have_serial = true;
+    }
     if (!basic && (wanted & KAL_INFO_IDENTITY)) {
         if (!one_component) return 1;
         struct { okw::file_fs_volume_information info; wchar_t label_tail[128]; } volume{};
@@ -981,9 +1040,11 @@ int kal_fs_info(kal_dir base, const char* name, kal_uintptr len,
         fill_absent(out);
         return kal_ok;
     }
+    bool learn = false;
+    okw_u64 volume_by_name = 0;
     {
         bool absent = false;
-        const int e = info_by_name(root, name, len, flags, wanted, out, absent);
+        const int e = info_by_name(root, name, len, flags, wanted, out, absent, learn, volume_by_name);
         if (e != 1) {
             if (absent) fill_absent(out);
             if (e == kal_ok && rights) asked(root, !absent, name, len);
@@ -1013,6 +1074,9 @@ int kal_fs_info(kal_dir base, const char* name, kal_uintptr len,
         return e;
     }
     if (rights) asked(root, true, name, len);
+    // The node the name ends at, opened as the record described it (a link was
+    // sent here before its volume was looked at): its volume is the record's.
+    if (learn) learn_volume(volume_by_name, h);
     const int e = fill(h, wanted, out);
     okw::NtClose(h);
     return e;
