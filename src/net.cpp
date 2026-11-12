@@ -296,15 +296,15 @@ void kal_net_close(kal_net_conn c) {
     const SOCKET s = socket_of(c);
     if (bad(s)) return;
     okw::note_read_ended(s, false);   // the number may be given to another socket
-    if (auto* n = net()) n->close(s);
     okw::retire(c.h);
+    if (auto* n = net()) n->close(s);
 }
 
 void kal_net_close_listener(kal_net_listener l) {
     const SOCKET s = socket_of(l);
     if (bad(s)) return;
-    if (auto* n = net()) n->close(s);
     okw::retire(l.h);
+    if (auto* n = net()) n->close(s);
 }
 
 // Both positions hold on this system: it speaks IPv6, and its `shutdown' ends

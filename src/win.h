@@ -79,9 +79,11 @@ extern "C" long long _InterlockedExchange64(volatile long long*, long long);
 extern "C" long long _InterlockedExchangeAdd64(volatile long long*, long long);
 extern "C" long long _InterlockedOr64(volatile long long*, long long);
 extern "C" long _InterlockedIncrement(volatile long*);
-#pragma intrinsic(_InterlockedExchange64, _InterlockedExchangeAdd64, _InterlockedOr64, _InterlockedIncrement)
+extern "C" long _InterlockedOr(volatile long*, long);
+#pragma intrinsic(_InterlockedExchange64, _InterlockedExchangeAdd64, _InterlockedOr64, _InterlockedIncrement, _InterlockedOr)
 namespace okw::atomic {
 inline long increment(volatile long* p) { return _InterlockedIncrement(p); }
+inline long load(volatile long* p) { return _InterlockedOr(p, 0); }
 inline long long exchange(volatile long long* p, long long v) { return _InterlockedExchange64(p, v); }
 inline long long fetch_add(volatile long long* p, long long v) { return _InterlockedExchangeAdd64(p, v); }
 inline long long load(volatile long long* p) { return _InterlockedOr64(p, 0); }
@@ -91,6 +93,7 @@ inline long long fetch_or(volatile long long* p, long long v) { return _Interloc
 #else
 namespace okw::atomic {
 inline long increment(volatile long* p) { return __atomic_add_fetch(p, 1, __ATOMIC_ACQ_REL); }
+inline long load(volatile long* p) { return __atomic_load_n(p, __ATOMIC_ACQUIRE); }
 inline long long exchange(volatile long long* p, long long v) { return __atomic_exchange_n(p, v, __ATOMIC_ACQ_REL); }
 inline long long fetch_add(volatile long long* p, long long v) { return __atomic_fetch_add(p, v, __ATOMIC_ACQ_REL); }
 inline long long load(volatile long long* p) { return __atomic_load_n(p, __ATOMIC_ACQUIRE); }
