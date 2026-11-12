@@ -24,9 +24,16 @@ namespace okw {
 
 inline constexpr okw_uptr kSlots = 1u << 16;
 
-inline unsigned* generations() {
-    static unsigned g[kSlots];
+// A generation is read by the context that opens a handle and advanced by the
+// one that releases it, and the two are different contexts whenever a value is
+// reused across them, so both go through the atomic operations (0.22.1).
+inline volatile long* generations() {
+    static volatile long g[kSlots];
     return g;
+}
+
+inline unsigned generation(okw_uptr slot) {
+    return static_cast<unsigned>(atomic::load(&generations()[slot]));
 }
 
 inline okw_uptr slot_of(void* h) {
@@ -50,7 +57,7 @@ inline okw_uptr pack(void* h) {
     if (h == nullptr || h == INVALID_HANDLE_VALUE) return 0;
     const okw_uptr v = reinterpret_cast<okw_uptr>(h);
     if (!within_bound(h)) return v;                    // carried without a generation
-    return (static_cast<okw_uptr>(generations()[slot_of(h)] & kGenerationMask) << 32) | (v + 1u);
+    return (static_cast<okw_uptr>(generation(slot_of(h)) & kGenerationMask) << 32) | (v + 1u);
 }
 
 // Returns the environment's handle, or null if the word does not name a live one.
@@ -61,13 +68,19 @@ inline void* unpack(okw_uptr w) {
     void* h = reinterpret_cast<void*>(low - 1u);
     if (!within_bound(h)) return reinterpret_cast<void*>(w);
     if ((static_cast<unsigned>(w >> 32) & kGenerationMask)
-        != (generations()[slot_of(h)] & kGenerationMask)) return nullptr;
+        != (generation(slot_of(h)) & kGenerationMask)) return nullptr;
     return h;
 }
 
+// RETIRE, THEN CLOSE (0.22.1). The system gives a closed value to the next
+// handle made in any context. A handle retired after its value was closed
+// leaves a window in which another context is given the value, packs it with
+// the generation the handle being released still has, and is then left with a
+// handle this retire makes stale (openkal-linux#53, the same construction: the
+// three releases of openkal.net and openkal.datagram closed first).
 inline void retire(okw_uptr w) {
     void* h = unpack(w);
-    if (h && within_bound(h)) ++generations()[slot_of(h)];
+    if (h && within_bound(h)) atomic::increment(&generations()[slot_of(h)]);
 }
 
 }  // namespace okw
