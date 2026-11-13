@@ -7,13 +7,20 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 openkal = "0.25.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.21.1"
+openkal-windows = "0.21.2"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
 drawn against systems that share an ancestry; a third implementation on a system
 that shares none of it is what turns "this interface is not Unix's shape" from a
 claim into an observation.
+
+## What 0.21.2 corrects
+
+The manifest declares `openkal = "^0.25.0"`. An implementation written against a
+patch release of the specification conforms to every later patch of that minor
+version (openkal clause 8); with an exact version, a consumer that names openkal
+0.25.1 could not resolve with this implementation.
 
 ## What 0.21.1 corrects
 
