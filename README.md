@@ -4,16 +4,36 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 
 ```toml
 [dependencies]
-openkal = "0.25.0"
+openkal = "0.26.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.22.2"
+openkal-windows = "0.23.0"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
 drawn against systems that share an ancestry; a third implementation on a system
 that shares none of it is what turns "this interface is not Unix's shape" from a
 claim into an observation.
+
+## What 0.23 changes (openkal 0.26)
+
+**A unit's reference names its boot and its session** (clause 7.18). A unit is a
+named job in the session's namespace, and its reference (`W2`) adds the count of
+boots the system's loader keeps and the session. A reference of another boot is
+`empty`. A reference of another session, and one whose name the system no longer
+keeps --- it drops a job's name with its last handle, whether or not a member
+remains --- are refused by `kal_process_job_open` with `kal_err_not_supported`:
+neither can be opened however long the caller waits, where both were a name that
+is not there. A reference in the earlier form (`W1`) is answered by its name as
+before. `KAL_PROCESS_PROP_JOB_OBSERVE` is claimed where the session can be read
+and two handles compared. `tests/a_unit_reference_names_its_boot_and_session.cpp`.
+
+**A start is bounded by the system alone** (clause 7.6). A started program read
+its arguments and variables into fixed tables --- 256 arguments, 512 variables,
+64 KiB of text --- and what did not fit was left out without a report: a program
+given two thousand arguments counted 255. Both vectors are measured and held in
+allocations of their size. A command line beyond the 32,767 units the system
+takes is `kal_err_no_space`, as before.
 
 ## What 0.22.2 corrects
 
@@ -79,7 +99,9 @@ when the count wraps.
 
 The process interface provides the OpenKal 0.24 declared-unit operations.
 Observation retains the original named-job handle and queries its active
-membership. A missing name after every handle is lost reports `unknown`.
+membership. A name the system dropped with its last handle is refused by
+`kal_process_job_open` with `kal_err_not_supported` (0.23.0): it is not evidence
+that the members have ended, and it cannot be opened again.
 Retirement checks the live continuation identity and requires that no external
 member remains. Closing an observation handle does not terminate the unit.
 

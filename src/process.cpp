@@ -1308,10 +1308,41 @@ using compare_objects_fn = BOOL (OKW_API*)(HANDLE,HANDLE);
 compare_objects_fn unit_compare() {
     return reinterpret_cast<compare_objects_fn>(okw::system_function(L"kernelbase.dll","CompareObjectHandles"));
 }
-bool observable_units() { return unit_compare() != nullptr; }
+// WHAT A REFERENCE NAMES, AND WHAT AN OBSERVATION CAN ESTABLISH (openkal 0.26,
+// clause 7.18). A unit is a named job in the session's own namespace
+// (`Local\'), so a reference (`W2') names the count of boots and the session
+// beside the job's name:
+//   another boot           every program of it has ended                 EMPTY
+//   another session        its names cannot be opened from here: `open'
+//                          refuses, to this caller always
+//   this session, no such name
+//                          the system drops a job's name with its last
+//                          handle, whether or not a member remains, so the
+//                          unit can never be opened again: `open' refuses
+//   this session, the job  its count of active processes
+// A `W1' reference names neither, and is answered by its name alone.
+//
+// The count of boots is the word the system's loader advances at each boot
+// (KUSER_SHARED_DATA.BootId, at one address in every process). A resume from
+// hibernation restores the word with the rest of memory, so it changes only
+// where every program has ended. Zero where the word is not kept: the
+// reference then names no boot, and none is compared.
+kal_u64 unit_boot() { return *reinterpret_cast<const volatile unsigned*>(static_cast<okw_uptr>(0x7ffe02c4u)); }
+bool unit_session(kal_u64& session) {
+    DWORD value = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(),&value)) return false;
+    session = value; return true;
+}
+// Claimed where a reference can be made: the session read, the handles compared.
+bool observable_units() { kal_u64 session = 0; return unit_compare() != nullptr && unit_session(session); }
 struct unit_identity {
-    kal_u64 owner = 0, birth = 0; char name[96]{};
+    kal_u64 owner = 0, birth = 0, boot = 0, session = 0; char name[96]{};
+    bool exact = false;   // a W2 reference, which names its boot and its session
 };
+bool unit_earlier_boot(const unit_identity& u) {
+    const kal_u64 boot = unit_boot();
+    return u.exact && u.boot != 0 && boot != 0 && u.boot != boot;
+}
 bool unit_birth(kal_u64& birth) {
     FILETIME created{}, ended{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(),&created,&ended,&kernel,&user)) return false;
@@ -1321,9 +1352,13 @@ bool unit_birth(kal_u64& birth) {
 bool unit_parse(const char* p, kal_uintptr n, unit_identity& u) {
     if (!p || n == 0 || n > 256) return false;
     unit_reference::reader r{p,n}; char kind[8]{};
-    if (!r.token(kind,sizeof kind) || !unit_reference::same(kind,"W1")
-        || !r.number(u.owner) || !u.owner || !r.number(u.birth) || !u.birth
-        || !r.token(u.name,sizeof u.name) || r.at != n) return false;
+    if (!r.token(kind,sizeof kind)) return false;
+    u.exact = unit_reference::same(kind,"W2");
+    if (!u.exact && !unit_reference::same(kind,"W1")) return false;
+    if (!r.number(u.owner) || !u.owner || !r.number(u.birth) || !u.birth
+        || !r.token(u.name,sizeof u.name)) return false;
+    if (u.exact && !(r.number(u.boot) && r.number(u.session))) return false;
+    if (r.at != n) return false;
     static const char prefix[] = "Local\\openkal-unit-";
     for (kal_uintptr i = 0; i < sizeof prefix - 1; ++i) if (u.name[i] != prefix[i]) return false;
     kal_uintptr at = sizeof prefix - 1;
@@ -1348,9 +1383,10 @@ extern "C" {
 int kal_process_job_create(kal_job* out, char* reference, kal_uintptr capacity, kal_uintptr* used) {
     if (!out || !reference || !used) return kal_err_invalid;
     if (capacity < 256) return kal_err_no_space;
-    if (!unit_compare()) return kal_err_not_supported;
+    if (!observable_units()) return kal_err_not_supported;
     unit_identity u; u.owner = GetCurrentProcessId();
-    if (!unit_birth(u.birth)) return kal_err_not_supported;
+    if (!unit_birth(u.birth) || !unit_session(u.session)) return kal_err_not_supported;
+    u.boot = unit_boot();
     unsigned char random[16]{};
     const int random_rc = kal_random_fill(random,sizeof random); if (random_rc != kal_ok) return random_rc;
     static const char prefix[] = "Local\\openkal-unit-", hex[] = "0123456789abcdef";
@@ -1361,7 +1397,8 @@ int kal_process_job_create(kal_job* out, char* reference, kal_uintptr capacity, 
     SetLastError(0); HANDLE job = CreateJobObjectW(nullptr,name);
     if (!job) return okw::translate_win32(GetLastError());
     if (GetLastError() == 183 /* ERROR_ALREADY_EXISTS */) { CloseHandle(job); return kal_err_again; }
-    unit_reference::writer w; w.text("W1;"); w.number(u.owner); w.next(); w.number(u.birth); w.next(); w.text(u.name);
+    unit_reference::writer w; w.text("W2;"); w.number(u.owner); w.next(); w.number(u.birth); w.next(); w.text(u.name);
+    w.next(); w.number(u.boot); w.next(); w.number(u.session);
     if (!w.valid) { CloseHandle(job); return kal_err_no_space; }
     if (!AssignProcessToJobObject(job,GetCurrentProcess())) { const auto error = GetLastError(); CloseHandle(job); return okw::translate_win32(error); }
     const auto packed = okw::pack(job);
@@ -1372,7 +1409,22 @@ int kal_process_job_open(const char* reference, kal_uintptr length, kal_job* out
     if (!out) return kal_err_invalid;
     unit_identity u; if (!unit_parse(reference,length,u)) return kal_err_invalid;
     if (!unit_compare()) return kal_err_not_supported;
-    HANDLE job = unit_open(u); if (!job) return okw::translate_win32(GetLastError());
+    HANDLE job = nullptr;
+    if (unit_earlier_boot(u)) {
+        // Nothing of that boot is left to open. The handle stands for the
+        // reference and is a job of no members; `observe' answers from the
+        // reference before it reads a handle.
+        job = CreateJobObjectW(nullptr,nullptr);
+        if (!job) return okw::translate_win32(GetLastError());
+    } else {
+        kal_u64 session = 0;
+        if (u.exact && (!unit_session(session) || session != u.session)) return kal_err_not_supported;
+        job = unit_open(u);
+        if (!job) {
+            const DWORD why = GetLastError();
+            return why == 2 /* ERROR_FILE_NOT_FOUND */ ? kal_err_not_supported : okw::translate_win32(why);
+        }
+    }
     const auto packed = okw::pack(job);
     if (!packed) { CloseHandle(job); return kal_err_no_memory; }
     out->h = packed; return kal_ok;
@@ -1381,6 +1433,7 @@ int kal_process_job_observe(kal_job job, const char* reference, kal_uintptr leng
     if (!state) return kal_err_invalid; *state = KAL_JOB_UNKNOWN;
     unit_identity u; if (!unit_parse(reference,length,u)) return kal_err_invalid;
     HANDLE original = okw::unpack(job.h); if (!original) return kal_err_invalid;
+    if (unit_earlier_boot(u)) { *state = KAL_JOB_EMPTY; return kal_ok; }
     if (!unit_matches(original,u)) return kal_ok;
     JOB_ACCOUNTING_ usage{};
     if (!QueryInformationJobObject(original,JobObjectBasicAccountingInformation_,&usage,sizeof usage,nullptr)) return kal_ok;
