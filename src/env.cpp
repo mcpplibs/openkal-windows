@@ -1,5 +1,6 @@
 #include "win.h"
 #include <openkal/env.h>
+#include <openkal/memory.h>   // the tables are sized by what the environment holds
 
 // The parameters a program receives at inception.
 //
@@ -14,30 +15,33 @@
 namespace {
 
 
-constexpr int kMaxArgs = 256;
-constexpr int kMaxVars = 512;
-constexpr okw_uptr kText = 1u << 16;
+// SIZED BY WHAT THE ENVIRONMENT HOLDS (0.23.0; openkal 0.26, clause 7.6).
+// The tables were fixed --- 256 arguments, 512 variables, 64 KiB of text ---
+// and what did not fit was left out without a word: a program started with
+// two thousand arguments counted 255. A start is bounded by the environment
+// alone, and that holds of what a program reads as much as of what its starter
+// passes. Both vectors are measured, then held in one allocation each.
+char*       g_text = nullptr;
+okw_uptr    g_cap = 0;
+okw_uptr    g_used = 0;
 
-char       g_text[kText];
-okw_uptr   g_used = 0;
+const char** g_argv = nullptr;
+okw_uptr*    g_argv_len = nullptr;
+int          g_argc = 0;
 
-const char* g_argv[kMaxArgs];
-okw_uptr    g_argv_len[kMaxArgs];
-int         g_argc = 0;
-
-const char* g_entry[kMaxVars];      // "name=value", as the environment states it
-okw_uptr    g_name_len[kMaxVars];
-const char* g_value[kMaxVars];
-okw_uptr    g_value_len[kMaxVars];
-int         g_varc = 0;
+const char** g_entry = nullptr;     // "name=value", as the environment states it
+okw_uptr*    g_name_len = nullptr;
+const char** g_value = nullptr;
+okw_uptr*    g_value_len = nullptr;
+int          g_varc = 0;
 
 bool        g_ready = false;
 
 // Arguments and named values are stored as they were given: neither is a name.
 const char* store(const wchar_t* w, int wlen, okw_uptr& out_len) {
-    if (g_used + 4 >= kText) { out_len = 0; return ""; }
+    if (g_used + 4 >= g_cap) { out_len = 0; return ""; }
     char* at = g_text + g_used;
-    const okw_uptr n = okw::narrow(w, static_cast<okw_uptr>(wlen), at, kText - g_used, false);
+    const okw_uptr n = okw::narrow(w, static_cast<okw_uptr>(wlen), at, g_cap - g_used, false);
     g_used += n + 1;
     out_len = n;
     return at;
@@ -69,8 +73,42 @@ void prepare() {
 void fill() {
     int count = 0;
     wchar_t** parts = CommandLineToArgvW(GetCommandLineW(), &count);
+    wchar_t* block = GetEnvironmentStringsW();
+
+    // Measured first: the elements of each vector, and the units of both. A
+    // unit of this system's encoding is at most three bytes of the caller's.
+    okw_uptr units = 0;
+    int variables = 0;
+    if (!parts) count = 0;
+    for (int i = 0; i < count; ++i) units += static_cast<okw_uptr>(wide_length(parts[i])) + 1;
+    for (const wchar_t* p = block; p && *p; ) {
+        const int len = wide_length(p);
+        if (p[0] != L'=') { ++variables; units += static_cast<okw_uptr>(len) + 1; }
+        p += len + 1;
+    }
+    const okw_uptr slots = static_cast<okw_uptr>(count) + 1;
+    const okw_uptr vars  = static_cast<okw_uptr>(variables) + 1;
+    g_cap       = 3 * units + 8;
+    g_text      = static_cast<char*>(kal_alloc(g_cap, 1));
+    g_argv      = static_cast<const char**>(kal_alloc(slots * sizeof(char*), alignof(char*)));
+    g_argv_len  = static_cast<okw_uptr*>(kal_alloc(slots * sizeof(okw_uptr), alignof(okw_uptr)));
+    g_entry     = static_cast<const char**>(kal_alloc(vars * sizeof(char*), alignof(char*)));
+    g_name_len  = static_cast<okw_uptr*>(kal_alloc(vars * sizeof(okw_uptr), alignof(okw_uptr)));
+    g_value     = static_cast<const char**>(kal_alloc(vars * sizeof(char*), alignof(char*)));
+    g_value_len = static_cast<okw_uptr*>(kal_alloc(vars * sizeof(okw_uptr), alignof(okw_uptr)));
+    // Without memory for them there is nothing to answer from: no argument but
+    // the empty first one, and no variable.
+    static const char* none[1] = { "" };
+    static okw_uptr    none_len[1] = { 0 };
+    if (!g_text || !g_argv || !g_argv_len || !g_entry || !g_name_len || !g_value || !g_value_len) {
+        if (parts) LocalFree(parts);
+        if (block) FreeEnvironmentStringsW(block);
+        g_argv = none; g_argv_len = none_len; g_argc = 1; g_varc = 0;
+        return;
+    }
+
     if (parts) {
-        for (int i = 0; i < count && g_argc < kMaxArgs - 1; ++i) {
+        for (int i = 0; i < count; ++i) {
             okw_uptr len = 0;
             // AS GIVEN, AND UNTIL 0.7.3 EVERY BACKSLASH CAME OUT AS A SLASH.
             // An argument is not a name: `C:\dir' and a pattern's `\d' are what
@@ -88,9 +126,8 @@ void fill() {
         g_argv[0] = ""; g_argv_len[0] = 0; g_argc = 1;
     }
 
-    wchar_t* block = GetEnvironmentStringsW();
     if (block) {
-        for (wchar_t* p = block; *p && g_varc < kMaxVars; ) {
+        for (wchar_t* p = block; *p && g_varc < variables; ) {
             const int len = wide_length(p);
             // A name beginning with a separator is this environment's own
             // bookkeeping and is not a variable a program set.

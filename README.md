@@ -28,9 +28,12 @@ is not there. A reference in the earlier form (`W1`) is answered by its name as
 before. `KAL_PROCESS_PROP_JOB_OBSERVE` is claimed where the session can be read
 and two handles compared. `tests/a_unit_reference_names_its_boot_and_session.cpp`.
 
-**A start is bounded by the system alone** (clause 7.6). This implementation kept
-no bound upon the number of arguments or variables; a command line beyond the
-32,767 units the system takes is `kal_err_no_space`, as before.
+**A start is bounded by the system alone** (clause 7.6). A started program read
+its arguments and variables into fixed tables --- 256 arguments, 512 variables,
+64 KiB of text --- and what did not fit was left out without a report: a program
+given two thousand arguments counted 255. Both vectors are measured and held in
+allocations of their size. A command line beyond the 32,767 units the system
+takes is `kal_err_no_space`, as before.
 
 ## What 0.22.2 corrects
 
