@@ -1,5 +1,6 @@
 #include "win.h"
 #include <openkal/env.h>
+#include <openkal/abort.h>
 #include <openkal/memory.h>   // the tables are sized by what the environment holds
 
 // The parameters a program receives at inception.
@@ -96,15 +97,13 @@ void fill() {
     g_name_len  = static_cast<okw_uptr*>(kal_alloc(vars * sizeof(okw_uptr), alignof(okw_uptr)));
     g_value     = static_cast<const char**>(kal_alloc(vars * sizeof(char*), alignof(char*)));
     g_value_len = static_cast<okw_uptr*>(kal_alloc(vars * sizeof(okw_uptr), alignof(okw_uptr)));
-    // Without memory for them there is nothing to answer from: no argument but
-    // the empty first one, and no variable.
-    static const char* none[1] = { "" };
-    static okw_uptr    none_len[1] = { 0 };
-    if (!g_text || !g_argv || !g_argv_len || !g_entry || !g_name_len || !g_value || !g_value_len) {
-        if (parts) LocalFree(parts);
-        if (block) FreeEnvironmentStringsW(block);
-        g_argv = none; g_argv_len = none_len; g_argc = 1; g_varc = 0;
-        return;
+    // WITHOUT MEMORY FOR THEM THE PROGRAM DOES NOT RUN WITHOUT THEM (0.23.1). Until
+    // 0.23.0 it ran with the empty first argument alone and no variable, and was
+    // not told: a program then acts on a vector and an environment it was never
+    // given. The environment's own division failing is the same case.
+    if (!parts || !g_text || !g_argv || !g_argv_len || !g_entry || !g_name_len || !g_value || !g_value_len) {
+        static constexpr char why[] = "openkal-windows: no memory for the program's arguments and variables";
+        kal_abort(why, sizeof why - 1);
     }
 
     if (parts) {

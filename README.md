@@ -7,13 +7,20 @@ An implementation of [openkal](https://github.com/mcpplibs/openkal) for Windows.
 openkal = "0.26.0"
 
 [target.'cfg(windows)'.dependencies]
-openkal-windows = "0.23.0"
+openkal-windows = "0.23.1"
 ```
 
 Its purpose is as much to test the specification as to be used. openkal was
 drawn against systems that share an ancestry; a third implementation on a system
 that shares none of it is what turns "this interface is not Unix's shape" from a
 claim into an observation.
+
+## What 0.23.1 corrects
+
+A program for whose arguments and variables there is no memory, or whose command
+line the environment cannot divide, ends with that reason on standard error.
+Until 0.23.0 it ran with the empty first argument alone and no variable, and was
+not told: a program then acted on a vector and an environment it was never given.
 
 ## What 0.23 changes (openkal 0.26)
 
